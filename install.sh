@@ -80,7 +80,7 @@ is_sh_bin=/usr/local/bin/$is_core
 is_sh_dir=$is_core_dir/sh
 
 # MODIFICADO: Aponta para o SEU repositório de scripts
-is_sh_repo=https://github.com/PhoenixxZ2023/xray2026 # <--- MUDE "SEU_USUARIO" AQUI
+is_sh_repo=PhoenixxZ2023/xray2026 # <--- MUDE "SEU_USUARIO" AQUI
 
 is_pkg="wget unzip"
 is_config_json=$is_core_dir/config.json
