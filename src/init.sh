@@ -1,7 +1,8 @@
 #!/bin/bash
 
-author=233boy
-# github=https://github.com/233boy/xray
+# MODIFICADO: Atualizado para o seu projeto
+author=PhoenixxZ2023
+github=https://github.com/PhoenixxZ2023/xray2026
 
 # bash fonts colors
 red='\e[31m'
@@ -34,8 +35,9 @@ _mkdir() {
     mkdir -p "$@"
 }
 
-is_err=$(_red_bg 错误!)
-is_warn=$(_red_bg 警告!)
+# MODIFICADO: Traduzido
+is_err=$(_red_bg Erro!)
+is_warn=$(_red_bg Aviso!)
 
 err() {
     echo -e "\n$is_err $@\n"
@@ -72,7 +74,8 @@ amd64 | x86_64)
     caddy_arch="arm64"
     ;;
 *)
-    err "此脚本仅支持 64 位系统..."
+    # MODIFICADO: Traduzido
+    err "Este script suporta apenas sistemas de 64 bits..."
     ;;
 esac
 
@@ -85,14 +88,20 @@ is_conf_dir=$is_core_dir/conf
 is_log_dir=/var/log/$is_core
 is_sh_bin=/usr/local/bin/$is_core
 is_sh_dir=$is_core_dir/sh
-is_sh_repo=$author/$is_core
+
+# MODIFICADO: Aponta para o seu repositório (para futuras atualizações)
+is_sh_repo=PhoenixxZ2023/xray2026
+
 is_pkg="wget unzip jq qrencode"
 is_config_json=$is_core_dir/config.json
 is_caddy_bin=/usr/local/bin/caddy
 is_caddy_dir=/etc/caddy
 is_caddy_repo=caddyserver/caddy
 is_caddyfile=$is_caddy_dir/Caddyfile
-is_caddy_conf=$is_caddy_dir/$author
+
+# MODIFICADO: Pasta de configuração do Caddy com o nome do seu projeto
+is_caddy_conf=$is_caddy_dir/xray2026
+
 is_caddy_service=$(systemctl list-units --full -all | grep caddy.service)
 is_http_port=80
 is_https_port=443
@@ -101,9 +110,11 @@ is_https_port=443
 is_core_ver=$($is_core_bin version | head -n1 | cut -d " " -f1-2)
 
 if [[ $(pgrep -f $is_core_bin) ]]; then
-    is_core_status=$(_green running)
+    # MODIFICADO: Traduzido
+    is_core_status=$(_green rodando)
 else
-    is_core_status=$(_red_bg stopped)
+    # MODIFICADO: Traduzido
+    is_core_status=$(_red_bg parado)
     is_core_stop=1
 fi
 if [[ -f $is_caddy_bin && -d $is_caddy_dir && $is_caddy_service ]]; then
@@ -120,9 +131,11 @@ if [[ -f $is_caddy_bin && -d $is_caddy_dir && $is_caddy_service ]]; then
     [[ $is_tmp_http_port ]] && is_http_port=$is_tmp_http_port
     [[ $is_tmp_https_port ]] && is_https_port=$is_tmp_https_port
     if [[ $(pgrep -f $is_caddy_bin) ]]; then
-        is_caddy_status=$(_green running)
+        # MODIFICADO: Traduzido
+        is_caddy_status=$(_green rodando)
     else
-        is_caddy_status=$(_red_bg stopped)
+        # MODIFICADO: Traduzido
+        is_caddy_status=$(_red_bg parado)
         is_caddy_stop=1
     fi
 fi
