@@ -1,10 +1,9 @@
 #!/bin/bash
 
-# MODIFICADO: Mantenha o autor original para crédito, se desejar.
-author=233boy
-# github=https://github.com/233boy/xray (Link original para referência)
+author=PhoenixxZ2023
+# github=https://github.com/PhoenixxZ2023/xray2026
 
-# Cores e fontes do Bash
+# Cores bash
 red='\e[31m'
 yellow='\e[33m'
 gray='\e[90m'
@@ -21,9 +20,8 @@ _yellow() { echo -e ${yellow}$@${none}; }
 _magenta() { echo -e ${magenta}$@${none}; }
 _red_bg() { echo -e "\e[41m$@${none}"; }
 
-# MODIFICADO: Traduzido
-is_err=$(_red_bg Erro!)
-is_warn=$(_red_bg Aviso!)
+is_err=$(_red_bg ERRO!)
+is_warn=$(_red_bg AVISO!)
 
 err() {
     echo -e "\n$is_err $@\n" && exit 1
@@ -33,22 +31,19 @@ warn() {
     echo -e "\n$is_warn $@\n"
 }
 
-# root
-# MODIFICADO: Traduzido
-[[ $EUID != 0 ]] && err "Este script deve ser executado como ${yellow}usuário ROOT.${none}"
+# Verificar root
+[[ $EUID != 0 ]] && err "Você não está executando como ${yellow}ROOT${none}."
 
-# yum or apt-get, ubuntu/debian/centos
+# yum ou apt-get, ubuntu/debian/centos
 cmd=$(type -P apt-get || type -P yum)
-# MODIFICADO: Traduzido
 [[ ! $cmd ]] && err "Este script suporta apenas ${yellow}(Ubuntu, Debian ou CentOS)${none}."
 
 # systemd
 [[ ! $(type -P systemctl) ]] && {
-    # MODIFICADO: Traduzido
-    err "Seu sistema não possui ${yellow}(systemctl)${none}, por favor, tente executar:${yellow} ${cmd} update -y;${cmd} install systemd -y ${none} para corrigir."
+    err "Este sistema não possui ${yellow}(systemctl)${none}, tente executar: ${yellow}${cmd} update -y; ${cmd} install systemd -y${none} para corrigir."
 }
 
-# wget installed or none
+# wget instalado ou não
 is_wget=$(type -P wget)
 
 # x64
@@ -62,26 +57,20 @@ amd64 | x86_64)
     is_core_arch="arm64-v8a"
     ;;
 *)
-    # MODIFICADO: Traduzido
-    err "Este script suporta apenas sistemas de 64 bits..."
+    err "Este script suporta apenas sistemas 64 bits..."
     ;;
 esac
 
-# Variáveis principais - NÃO MUDE "is_core=xray"
-# Isso quebraria os caminhos /etc/xray, /var/log/xray, etc.
 is_core=xray
 is_core_name=Xray
 is_core_dir=/etc/$is_core
 is_core_bin=$is_core_dir/bin/$is_core
-is_core_repo=xtls/$is_core-core # Repositório do programa Xray (Não mude)
+is_core_repo=xtls/$is_core-core
 is_conf_dir=$is_core_dir/conf
 is_log_dir=/var/log/$is_core
 is_sh_bin=/usr/local/bin/$is_core
 is_sh_dir=$is_core_dir/sh
-
-# MODIFICADO: Aponta para o SEU repositório de scripts
-is_sh_repo=PhoenixxZ2023/xray2026 # <--- MUDE "SEU_USUARIO" AQUI
-
+is_sh_repo=$author/xray2026
 is_pkg="wget unzip"
 is_config_json=$is_core_dir/config.json
 tmp_var_lists=(
@@ -94,29 +83,29 @@ tmp_var_lists=(
     is_pkg_ok
 )
 
-# tmp dir
+# Diretório temporário
 tmpdir=$(mktemp -u)
 [[ ! $tmpdir ]] && {
     tmpdir=/tmp/tmp-$RANDOM
 }
 
-# set up var
+# Configurar variáveis
 for i in ${tmp_var_lists[*]}; do
     export $i=$tmpdir/$i
 done
 
-# load bash script.
+# Carregar script bash
 load() {
     . $is_sh_dir/src/$1
 }
 
-# wget add --no-check-certificate
+# wget adicionar --no-check-certificate
 _wget() {
     [[ $proxy ]] && export https_proxy=$proxy
     wget --no-check-certificate $*
 }
 
-# print a mesage
+# Imprimir mensagem
 msg() {
     case $1 in
     warn)
@@ -133,20 +122,19 @@ msg() {
     echo -e "${color}$(date +'%T')${none}) ${2}"
 }
 
-# show help msg
+# Mostrar mensagem de ajuda
 show_help() {
-    # MODIFICADO: Traduzido
     echo -e "Uso: $0 [-f xxx | -l | -p xxx | -v xxx | -h]"
-    echo -e "  -f, --core-file <path>   Caminho para um arquivo $is_core_name personalizado, ex: -f /root/${is_core}-linux-64.zip"
-    echo -e "  -l, --local-install      Instalação local, usando o diretório atual"
-    echo -e "  -p, --proxy <addr>       Usar um proxy para download, ex: -p http://127.0.0.1:2333"
-    echo -e "  -v, --core-version <ver> Definir uma versão personalizada do $is_core_name, ex: -v v1.8.1"
-    echo -e "  -h, --help               Exibir esta mensagem de ajuda\n"
+    echo -e "  -f, --core-file <caminho>       Caminho personalizado do arquivo $is_core_name, ex: -f /root/${is_core}-linux-64.zip"
+    echo -e "  -l, --local-install             Instalação local do script, usando diretório atual"
+    echo -e "  -p, --proxy <endereço>          Usar proxy para download, ex: -p http://127.0.0.1:2333"
+    echo -e "  -v, --core-version <versão>     Versão personalizada do $is_core_name, ex: -v v1.8.1"
+    echo -e "  -h, --help                      Mostrar esta mensagem de ajuda\n"
 
     exit 0
 }
 
-# install dependent pkg
+# Instalar pacotes dependentes
 install_pkg() {
     cmd_not_found=
     for i in $*; do
@@ -154,8 +142,7 @@ install_pkg() {
     done
     if [[ $cmd_not_found ]]; then
         pkg=$(echo $cmd_not_found | sed 's/,/ /g')
-        # MODIFICADO: Traduzido
-        msg warn "Instalando dependências >${pkg}"
+        msg warn "Instalando pacotes dependentes > ${pkg}"
         $cmd install -y $pkg &>/dev/null
         if [[ $? != 0 ]]; then
             [[ $cmd =~ yum ]] && yum install epel-release -y &>/dev/null
@@ -170,7 +157,7 @@ install_pkg() {
     fi
 }
 
-# download file
+# Baixar arquivo
 download() {
     case $1 in
     core)
@@ -180,13 +167,12 @@ download() {
         tmpfile=$tmpcore
         is_ok=$is_core_ok
         ;;
-    # A função "sh" não é mais usada, foi substituída por download_scripts()
-    # sh)
-    #     link=https://github.com/${is_sh_repo}/releases/latest/download/code.zip
-    #     name="$is_core_name 脚本" # MODIFICADO: Traduzido -> "Scripts $is_core_name"
-    #     tmpfile=$tmpsh
-    #     is_ok=$is_sh_ok
-    #     ;;
+    sh)
+        link=https://github.com/${is_sh_repo}/releases/latest/download/code.zip
+        name="Script $is_core_name"
+        tmpfile=$tmpsh
+        is_ok=$is_sh_ok
+        ;;
     jq)
         link=https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-$is_jq_arch
         name="jq"
@@ -195,86 +181,38 @@ download() {
         ;;
     esac
 
-    # MODIFICADO: Traduzido
     msg warn "Baixando ${name} > ${link}"
     if _wget -t 3 -q -c $link -O $tmpfile; then
         mv -f $tmpfile $is_ok
     fi
 }
 
-# MODIFICADO: Nova lista de arquivos baseada na sua captura de tela da pasta src/
-SCRIPT_FILES=(
-    "xray.sh"
-    "src/bbr.sh"
-    "src/caddy.sh"
-    "src/core.sh"
-    "src/dns.sh"
-    "src/download.sh"
-    "src/help.sh"
-    "src/init.sh"
-    "src/log.sh"
-    "src/systemd.sh"
-)
-
-# MODIFICADO: Nova função para baixar os scripts individualmente do seu repo
-download_scripts() {
-    msg warn "Baixando scripts de ${is_sh_repo}..."
-    
-    # Criar os diretórios necessários
-    mkdir -p $is_sh_dir/src
-    
-    local base_url="https://raw.githubusercontent.com/${is_sh_repo}/main"
-    
-    for file in "${SCRIPT_FILES[@]}"; do
-        # O caminho de destino no servidor
-        local dest_path="$is_sh_dir/$file"
-        # A URL de origem no GitHub
-        local url="$base_url/$file"
-        
-        msg warn "Baixando > $file"
-        if !_wget -t 3 -q -c "$url" -O "$dest_path"; then
-            msg err "Falha ao baixar $file"
-            is_fail=1 # Sinaliza falha
-            return 1
-        fi
-    done
-    
-    # Se tudo correu bem, crie o arquivo de status 'is_sh_ok'
-    >$is_sh_ok
-    msg ok "Scripts baixados com sucesso."
-}
-
-
-# get server ip
+# Obter IP do servidor
 get_ip() {
     export "$(_wget -4 -qO- https://one.one.one.one/cdn-cgi/trace | grep ip=)" &>/dev/null
     [[ -z $ip ]] && export "$(_wget -6 -qO- https://one.one.one.one/cdn-cgi/trace | grep ip=)" &>/dev/null
 }
 
-# check background tasks status
+# Verificar status das tarefas em segundo plano
 check_status() {
-    # dependent pkg install fail
+    # Falha na instalação de pacotes dependentes
     [[ ! -f $is_pkg_ok ]] && {
-        # MODIFICADO: Traduzido
-        msg err "Falha ao instalar dependências"
-        msg err "Por favor, tente instalar manualmente: $cmd update -y; $cmd install -y $is_pkg"
+        msg err "Falha ao instalar pacotes dependentes"
+        msg err "Tente instalar manualmente: $cmd update -y; $cmd install -y $is_pkg"
         is_fail=1
     }
 
-    # download file status
+    # Status do download de arquivos
     if [[ $is_wget ]]; then
         [[ ! -f $is_core_ok ]] && {
-            # MODIFICADO: Traduzido
             msg err "Falha ao baixar ${is_core_name}"
             is_fail=1
         }
         [[ ! -f $is_sh_ok ]] && {
-            # MODIFICADO: Traduzido
-            msg err "Falha ao baixar um ou mais scripts do ${is_core_name}"
+            msg err "Falha ao baixar script ${is_core_name}"
             is_fail=1
         }
         [[ ! -f $is_jq_ok ]] && {
-            # MODIFICADO: Traduzido
             msg err "Falha ao baixar jq"
             is_fail=1
         }
@@ -282,8 +220,7 @@ check_status() {
         [[ ! $is_fail ]] && {
             is_wget=1
             [[ ! $is_core_file ]] && download core &
-            # MODIFICADO: Chama a nova função
-            [[ ! $local_install ]] && download_scripts &
+            [[ ! $local_install ]] && download sh &
             [[ $jq_not_found ]] && download jq &
             get_ip
             wait
@@ -291,22 +228,20 @@ check_status() {
         }
     fi
 
-    # found fail status, remove tmp dir and exit.
+    # Encontrou falha, remover diretório temporário e sair
     [[ $is_fail ]] && {
         exit_and_del_tmpdir
     }
 }
 
-# parameters check
+# Verificação de parâmetros
 pass_args() {
     while [[ $# -gt 0 ]]; do
         case $1 in
         -f | --core-file)
             [[ -z $2 ]] && {
-                # MODIFICADO: Traduzido
-                err "($1) Faltando argumento obrigatório, ex: [$1 /root/$is_core-linux-64.zip]"
+                err "($1) parâmetro obrigatório ausente, uso correto: [$1 /root/$is_core-linux-64.zip]"
             } || [[ ! -f $2 ]] && {
-                # MODIFICADO: Traduzido
                 err "($2) não é um arquivo válido."
             }
             is_core_file=$2
@@ -314,24 +249,21 @@ pass_args() {
             ;;
         -l | --local-install)
             [[ ! -f ${PWD}/src/core.sh || ! -f ${PWD}/$is_core.sh ]] && {
-                # MODIFICADO: Traduzido
-                err "O diretório atual (${PWD}) não é um diretório de script completo."
+                err "Diretório atual (${PWD}) não é um diretório de script completo."
             }
             local_install=1
             shift 1
             ;;
         -p | --proxy)
             [[ -z $2 ]] && {
-                # MODIFICADO: Traduzido
-                err "($1) Faltando argumento obrigatório, ex: [$1 http://127.0.0.1:2333 or -p socks5://127.0.0.1:2333]"
+                err "($1) parâmetro obrigatório ausente, uso correto: [$1 http://127.0.0.1:2333 ou -p socks5://127.0.0.1:2333]"
             }
             proxy=$2
             shift 2
             ;;
         -v | --core-version)
             [[ -z $2 ]] && {
-                # MODIFICADO: Traduzido
-                err "($1) Faltando argumento obrigatório, ex: [$1 v1.8.1]"
+                err "($1) parâmetro obrigatório ausente, uso correto: [$1 v1.8.1]"
             }
             is_core_ver=v${2#v}
             shift 2
@@ -340,79 +272,75 @@ pass_args() {
             show_help
             ;;
         *)
-            # MODIFICADO: Traduzido
-            echo -e "\n${is_err} ($@) é um parâmetro desconhecido...\n"
+            echo -e "\n${is_err} ($@) parâmetro desconhecido...\n"
             show_help
             ;;
         esac
     done
     [[ $is_core_ver && $is_core_file ]] && {
-        # MODIFICADO: Traduzido
-        err "Não é possível definir uma versão e um arquivo personalizado do ${is_core_name} ao mesmo tempo."
+        err "Não é possível personalizar versão e arquivo do ${is_core_name} ao mesmo tempo."
     }
 }
 
-# exit and remove tmpdir
+# Sair e remover tmpdir
 exit_and_del_tmpdir() {
     rm -rf $tmpdir
     [[ ! $1 ]] && {
-        # MODIFICADO: Traduzido
-        msg err "Opa.."
-        msg err "Ocorreu um erro durante a instalação..."
-        # MODIFICADO: Aponta para o SEU repositório de issues
-        echo -e "Reportar problemas) https://github.com/${is_sh_repo}/issues"
+        msg err "Oops..."
+        msg err "Erro durante a instalação..."
+        echo -e "Reportar problema: https://github.com/${is_sh_repo}/issues"
         echo
         exit 1
     }
     exit
 }
 
-# main
+# Principal
 main() {
 
-    # check old version
+    # Verificar versão antiga
     [[ -f $is_sh_bin && -d $is_core_dir/bin && -d $is_sh_dir && -d $is_conf_dir ]] && {
-        # MODIFICADO: Traduzido
-        err "Script já detectado. Para reinstalar, use: ${green}${is_core} reinstall${none}"
+        err "Script já instalado detectado. Para reinstalar use o comando: ${green}${is_core} reinstall${none}"
     }
 
-    # check parameters
+    # Verificar parâmetros
     [[ $# -gt 0 ]] && pass_args $@
 
-    # show welcome msg
+    # Mostrar mensagem de boas-vindas
     clear
     echo
-    # MODIFICADO: Personalizado
-    echo "........... Script $is_core_name (Projeto xray2026) .........."
+    echo "........... $is_core_name 2026 - Script Avançado by $author .........."
+    echo "........... Instalação do Xray-core Oficial (XTLS) .........."
+    echo
+    msg ok "Repositório: https://github.com/${is_sh_repo}"
     echo
 
-    # start installing...
-    # MODIFICADO: Traduzido
-    msg warn "Iniciando a instalação..."
-    [[ $is_core_ver ]] && msg warn "Versão ${is_core_name}: ${yellow}$is_core_ver${none}"
+    # Iniciar instalação...
+    msg warn "Iniciando instalação..."
+    [[ $is_core_ver ]] && msg warn "Versão do ${is_core_name}: ${yellow}$is_core_ver${none}"
     [[ $proxy ]] && msg warn "Usando proxy: ${yellow}$proxy${none}"
-    # create tmpdir
+    
+    # Criar tmpdir
     mkdir -p $tmpdir
-    # if is_core_file, copy file
+    
+    # Se is_core_file, copiar arquivo
     [[ $is_core_file ]] && {
         cp -f $is_core_file $is_core_ok
-        # MODIFICADO: Traduzido
-        msg warn "${yellow}Arquivo ${is_core_name} usado > $is_core_file${none}"
+        msg warn "${yellow}Usando arquivo ${is_core_name} > $is_core_file${none}"
     }
-    # local dir install sh script
+    
+    # Instalação local do diretório sh script
     [[ $local_install ]] && {
         >$is_sh_ok
-        # MODIFICADO: Traduzido
-        msg warn "${yellow}Instalando scripts localmente > $PWD ${none}"
+        msg warn "${yellow}Instalação local do script > $PWD${none}"
     }
 
     timedatectl set-ntp true &>/dev/null
     [[ $? != 0 ]] && {
-        # MODIFICADO: Traduzido
-        msg warn "${yellow}\e[4mAtenção!!! Não foi possível sincronizar o relógio. Isso pode afetar o protocolo VMess.${none}"
+        msg warn "${yellow}\e[4mAVISO!!! Não foi possível configurar sincronização automática de horário. Isso pode afetar o uso do protocolo VMess.${none}"
     }
 
-    # install dependent pkg
+    # Instalar pacotes dependentes
     install_pkg $is_pkg &
 
     # jq
@@ -421,72 +349,67 @@ main() {
     else
         jq_not_found=1
     fi
-    # if wget installed. download core, sh, jq, get ip
+    
+    # Se wget instalado, baixar core, sh, jq, obter ip
     [[ $is_wget ]] && {
         [[ ! $is_core_file ]] && download core &
-        # MODIFICADO: Chama a nova função
-        [[ ! $local_install ]] && download_scripts &
+        [[ ! $local_install ]] && download sh &
         [[ $jq_not_found ]] && download jq &
         get_ip
     }
 
-    # waiting for background tasks is done
+    # Aguardar conclusão das tarefas em segundo plano
     wait
 
-    # check background tasks status
+    # Verificar status das tarefas em segundo plano
     check_status
 
-    # test $is_core_file
+    # Testar $is_core_file
     if [[ $is_core_file ]]; then
         unzip -qo $is_core_ok -d $tmpdir/testzip &>/dev/null
         [[ $? != 0 ]] && {
-            # MODIFICADO: Traduzido
-            msg err "Arquivo ${is_core_name} falhou no teste de extração."
+            msg err "Arquivo ${is_core_name} não passou no teste."
             exit_and_del_tmpdir
         }
         for i in ${is_core} geoip.dat geosite.dat; do
             [[ ! -f $tmpdir/testzip/$i ]] && is_file_err=1 && break
         done
         [[ $is_file_err ]] && {
-            # MODIFICADO: Traduzido
-            msg err "Arquivo ${is_core_name} está incompleto."
+            msg err "Arquivo ${is_core_name} não passou no teste."
             exit_and_del_tmpdir
         }
     fi
 
-    # get server ip.
+    # Obter IP do servidor
     [[ ! $ip ]] && {
-        # MODIFICADO: Traduzido
-        msg err "Falha ao obter o IP do servidor."
+        msg err "Falha ao obter IP do servidor."
         exit_and_del_tmpdir
     }
 
-    # create sh dir...
-    # MODIFICADO: A função download_scripts() já cria a pasta
-    # mkdir -p $is_sh_dir
+    # Criar diretório sh...
+    mkdir -p $is_sh_dir
 
-    # copy sh file or unzip sh zip file.
+    # Copiar arquivo sh ou extrair zip sh
     if [[ $local_install ]]; then
         cp -rf $PWD/* $is_sh_dir
+    else
+        unzip -qo $is_sh_ok -d $is_sh_dir
     fi
-    # MODIFICADO: O unzip não é mais necessário, pois os arquivos são baixados individualmente.
-    # else
-    #     unzip -qo $is_sh_ok -d $is_sh_dir
-    # fi
 
-    # create core bin dir
+    # Criar diretório bin do core
     mkdir -p $is_core_dir/bin
-    # copy core file or unzip core zip file
+    
+    # Copiar arquivo core ou extrair zip core
     if [[ $is_core_file ]]; then
         cp -rf $tmpdir/testzip/* $is_core_dir/bin
     else
         unzip -qo $is_core_ok -d $is_core_dir/bin
     fi
 
-    # add alias
+    # Adicionar alias
     echo "alias $is_core=$is_sh_bin" >>/root/.bashrc
 
-    # core command
+    # Comando core
     ln -sf $is_sh_dir/$is_core.sh $is_sh_bin
 
     # jq
@@ -494,29 +417,50 @@ main() {
 
     # chmod
     chmod +x $is_core_bin $is_sh_bin /usr/bin/jq
-    chmod +x $is_sh_dir/src/*.sh # Garante que os scripts baixados sejam executáveis
 
-    # create log dir
+    # Criar diretório de log
     mkdir -p $is_log_dir
 
-    # show a tips msg
-    # MODIFICADO: Traduzido
-    msg ok "Gerando arquivos de configuração..."
+    # Criar diretório de dados de usuários
+    mkdir -p $is_core_dir/users
+    
+    # Criar arquivo de banco de dados de usuários
+    echo "[]" > $is_core_dir/users/users.json
 
-    # create systemd service
+    # Mostrar mensagem de dica
+    msg ok "Gerando arquivo de configuração..."
+
+    # Criar serviço systemd
     load systemd.sh
     is_new_install=1
     install_service $is_core &>/dev/null
 
-    # create condf dir
+    # Criar diretório conf
     mkdir -p $is_conf_dir
 
     load core.sh
-    # create a tcp config
+    
+    # Criar configuração TCP com VLESS-REALITY
     add reality
-    # remove tmp dir and exit.
+    
+    # Mostrar informações de instalação concluída
+    echo
+    echo "=========================================="
+    msg ok "Instalação concluída com sucesso!"
+    echo "=========================================="
+    echo
+    msg ok "Execute o comando: ${green}xray${none} para gerenciar"
+    msg ok "Execute o comando: ${green}xray help${none} para ajuda"
+    echo
+    msg ok "Gerenciamento de usuários disponível!"
+    msg ok "Monitoramento de tráfego habilitado!"
+    msg ok "Protocolo VLESS-REALITY ativo!"
+    echo
+    echo "=========================================="
+    
+    # Remover diretório tmp e sair
     exit_and_del_tmpdir ok
 }
 
-# start.
+# Iniciar
 main $@
