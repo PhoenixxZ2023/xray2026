@@ -1,10 +1,12 @@
 #!/bin/bash
 
-# MODIFICADO: Atualizado para o seu projeto
-author=PhoenixxZ2023
-github=https://github.com/PhoenixxZ2023/xray2026
+# Xray2026 - Script de Inicialização
+# Autor: PhoenixxZ2023
+# GitHub: https://github.com/PhoenixxZ2023/xray2026
 
-# bash fonts colors
+author=PhoenixxZ2023
+
+# Cores bash
 red='\e[31m'
 yellow='\e[33m'
 gray='\e[90m'
@@ -35,9 +37,8 @@ _mkdir() {
     mkdir -p "$@"
 }
 
-# MODIFICADO: Traduzido
-is_err=$(_red_bg Erro!)
-is_warn=$(_red_bg Aviso!)
+is_err=$(_red_bg ERRO!)
+is_warn=$(_red_bg AVISO!)
 
 err() {
     echo -e "\n$is_err $@\n"
@@ -49,18 +50,18 @@ warn() {
     echo -e "\n$is_warn $@\n"
 }
 
-# load bash script.
+# Carregar script bash
 load() {
     . $is_sh_dir/src/$1
 }
 
-# wget add --no-check-certificate
+# wget adicionar --no-check-certificate
 _wget() {
     # [[ $proxy ]] && export https_proxy=$proxy
     wget --no-check-certificate "$@"
 }
 
-# yum or apt-get
+# yum ou apt-get
 cmd=$(type -P apt-get || type -P yum)
 
 # x64
@@ -74,8 +75,7 @@ amd64 | x86_64)
     caddy_arch="arm64"
     ;;
 *)
-    # MODIFICADO: Traduzido
-    err "Este script suporta apenas sistemas de 64 bits..."
+    err "Este script suporta apenas sistemas 64 bits..."
     ;;
 esac
 
@@ -88,38 +88,44 @@ is_conf_dir=$is_core_dir/conf
 is_log_dir=/var/log/$is_core
 is_sh_bin=/usr/local/bin/$is_core
 is_sh_dir=$is_core_dir/sh
-
-# MODIFICADO: Aponta para o seu repositório (para futuras atualizações)
-is_sh_repo=PhoenixxZ2023/xray2026
-
+is_sh_repo=$author/xray2026
 is_pkg="wget unzip jq qrencode"
 is_config_json=$is_core_dir/config.json
 is_caddy_bin=/usr/local/bin/caddy
 is_caddy_dir=/etc/caddy
 is_caddy_repo=caddyserver/caddy
 is_caddyfile=$is_caddy_dir/Caddyfile
-
-# MODIFICADO: Pasta de configuração do Caddy com o nome do seu projeto
-is_caddy_conf=$is_caddy_dir/xray2026
-
+is_caddy_conf=$is_caddy_dir/$author
 is_caddy_service=$(systemctl list-units --full -all | grep caddy.service)
 is_http_port=80
 is_https_port=443
 
-# core ver
-is_core_ver=$($is_core_bin version | head -n1 | cut -d " " -f1-2)
+# Diretórios e arquivos de gerenciamento de usuários
+is_users_dir=$is_core_dir/users
+is_users_db=$is_users_dir/users.json
+is_traffic_log=$is_users_dir/traffic.log
 
+# Verificar e criar estrutura de usuários se não existir
+[[ ! -d $is_users_dir ]] && _mkdir $is_users_dir
+[[ ! -f $is_users_db ]] && echo "[]" > $is_users_db
+[[ ! -f $is_traffic_log ]] && touch $is_traffic_log
+
+# Versão do core
+is_core_ver=$($is_core_bin version 2>/dev/null | head -n1 | cut -d " " -f1-2)
+[[ ! $is_core_ver ]] && is_core_ver="Não instalado"
+
+# Status do core
 if [[ $(pgrep -f $is_core_bin) ]]; then
-    # MODIFICADO: Traduzido
-    is_core_status=$(_green rodando)
+    is_core_status=$(_green "em execução")
 else
-    # MODIFICADO: Traduzido
-    is_core_status=$(_red_bg parado)
+    is_core_status=$(_red_bg "parado")
     is_core_stop=1
 fi
+
+# Verificar Caddy
 if [[ -f $is_caddy_bin && -d $is_caddy_dir && $is_caddy_service ]]; then
     is_caddy=1
-    # fix caddy run; ver >= 2.8.2
+    # Corrigir caddy run; ver >= 2.8.2
     [[ ! $(grep '\-\-adapter caddyfile' /lib/systemd/system/caddy.service) ]] && {
         load systemd.sh
         install_service caddy
@@ -131,15 +137,14 @@ if [[ -f $is_caddy_bin && -d $is_caddy_dir && $is_caddy_service ]]; then
     [[ $is_tmp_http_port ]] && is_http_port=$is_tmp_http_port
     [[ $is_tmp_https_port ]] && is_https_port=$is_tmp_https_port
     if [[ $(pgrep -f $is_caddy_bin) ]]; then
-        # MODIFICADO: Traduzido
-        is_caddy_status=$(_green rodando)
+        is_caddy_status=$(_green "em execução")
     else
-        # MODIFICADO: Traduzido
-        is_caddy_status=$(_red_bg parado)
+        is_caddy_status=$(_red_bg "parado")
         is_caddy_stop=1
     fi
 fi
 
+# Carregar core.sh e executar main
 load core.sh
 [[ ! $args ]] && args=main
 main $args
