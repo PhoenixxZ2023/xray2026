@@ -1,123 +1,515 @@
-# 介绍
+# Xray2026 - Sistema Completo de Gerenciamento
 
-最好用的 Xray 一键安装脚本 & 管理脚本
+**Autor:** PhoenixxZ2023  
+**Repositório:** https://github.com/PhoenixxZ2023/xray2026  
+**Versão:** 2.0
 
-# 特点
+---
 
-- 快速安装
-- 无敌好用
-- 零学习成本
-- 自动化 TLS
-- 简化所有流程
-- 屏蔽 BT
-- 屏蔽中国 IP
-- 使用 API 操作
-- 兼容 Xray 命令
-- 强大的快捷参数
-- 支持所有常用协议
-- 一键添加 VLESS-REALITY (默认)
-- 一键添加 Shadowsocks 2022
-- 一键添加 VMess-(TCP/mKCP)
-- 一键添加 VMess-(WS/gRPC)-TLS
-- 一键添加 VLESS-(WS/gRPC/XHTTP)-TLS
-- 一键添加 Trojan-(WS/gRPC)-TLS
-- 一键添加 VMess-(TCP/mKCP) 动态端口
-- 一键启用 BBR
-- 一键更改伪装网站
-- 一键更改 (端口/UUID/密码/域名/路径/加密方式/SNI/动态端口/等...)
-- 还有更多...
+## 📋 Sobre o Projeto
 
-# 设计理念
+Xray2026 é uma versão melhorada e traduzida do script Xray com funcionalidades avançadas de gerenciamento de usuários, monitoramento de tráfego e controle automático de vencimento.
 
-设计理念为：**高效率，超快速，极易用**
+### 🎯 Funcionalidades Principais
 
-脚本基于作者的自身使用需求，以 **多配置同时运行** 为核心设计
+✅ **Gerenciamento Completo de Usuários**
+- Adicionar usuários com UUID único
+- Sistema de data de vencimento automático
+- Renovação e alteração de validade
+- Deletar e listar usuários
 
-并且专门优化了，添加、更改、查看、删除、这四项常用功能
+✅ **Monitoramento de Tráfego em Tempo Real**
+- Estatísticas via API Stats do Xray
+- Visualização por usuário
+- Monitoramento em tempo real
+- Exportação de relatórios
 
-你只需要一条命令即可完成 添加、更改、查看、删除、等操作
+✅ **Verificação Automática de Vencimento**
+- Desativação automática de usuários expirados
+- Avisos de vencimento próximo
+- Limpeza de usuários antigos
+- Cron automático configurável
 
-例如，添加一个配置仅需不到 1 秒！瞬间完成添加！其他操作亦是如此！
+✅ **Geração de Links**
+- Links VLESS-REALITY com QR Code
+- Suporte a VMess e Trojan
+- Links compartilháveis
 
-脚本的参数非常高效率并且超级易用，请掌握参数的使用
+✅ **Protocolos Suportados**
+- VLESS-REALITY (recomendado)
+- VLESS-WS-TLS / gRPC / XHTTP
+- VMess-TCP / mKCP / WS / gRPC
+- Trojan-WS-TLS / gRPC
+- Shadowsocks 2022
+- Socks / Dokodemo-Door
 
-# 文档
+---
 
-安装及使用：https://233boy.com/xray/xray-script/
+## 🚀 Instalação Rápida
 
-# 帮助
+```bash
+# Instalação com um comando
+bash <(curl -Ls https://raw.githubusercontent.com/PhoenixxZ2023/xray2026/main/install.sh)
+```
 
-使用：`xray help`
+### Opções de Instalação
+
+```bash
+# Com proxy
+bash install.sh -p http://127.0.0.1:2333
+
+# Versão específica do Xray
+bash install.sh -v v1.8.1
+
+# Instalação local
+bash install.sh -l
+
+# Arquivo customizado
+bash install.sh -f /root/xray-linux-64.zip
+```
+
+---
+
+## 📁 Estrutura de Arquivos
 
 ```
-Xray script v1.21 by 233boy
-Usage: xray [options]... [args]...
+/etc/xray/
+├── bin/
+│   ├── xray                    # Binário do Xray-core
+│   ├── geoip.dat
+│   └── geosite.dat
+├── conf/
+│   └── [arquivos de config]    # Configurações dos protocolos
+├── sh/
+│   ├── xray.sh                 # Script principal
+│   └── src/
+│       ├── init.sh             # Inicialização
+│       ├── core.sh             # Funções principais
+│       ├── user-manager.sh     # ✨ Gerenciamento de usuários
+│       ├── traffic-monitor.sh  # ✨ Monitoramento de tráfego
+│       ├── expiration-checker.sh # ✨ Verificação de vencimento
+│       ├── systemd.sh
+│       ├── help.sh
+│       ├── bbr.sh
+│       ├── caddy.sh
+│       ├── dns.sh
+│       ├── download.sh
+│       └── log.sh
+├── users/
+│   ├── users.json              # Banco de dados de usuários
+│   ├── traffic.log             # Log de tráfego
+│   └── expiration.log          # Log de expirações
+└── config.json                 # Configuração principal do Xray
 
-基本:
-   v, version                                      显示当前版本
-   ip                                              返回当前主机的 IP
-   pbk                                             同等于 xray x25519
-   get-port                                        返回一个可用的端口
-   ss2022                                          返回一个可用于 Shadowsocks 2022 的密码
+/var/log/xray/
+└── [arquivos de log]
 
-一般:
-   a, add [protocol] [args... | auto]              添加配置
-   c, change [name] [option] [args... | auto]      更改配置
-   d, del [name]                                   删除配置**
-   i, info [name]                                  查看配置
-   qr [name]                                       二维码信息
-   url [name]                                      URL 信息
-   log                                             查看日志
-   logerr                                          查看错误日志
-
-更改:
-   dp, dynamicport [name] [start | auto] [end]     更改动态端口
-   full [name] [...]                               更改多个参数
-   id [name] [uuid | auto]                         更改 UUID
-   host [name] [domain]                            更改域名
-   port [name] [port | auto]                       更改端口
-   path [name] [path | auto]                       更改路径
-   passwd [name] [password | auto]                 更改密码
-   key [name] [Private key | atuo] [Public key]    更改密钥
-   type [name] [type | auto]                       更改伪装类型
-   method [name] [method | auto]                   更改加密方式
-   sni [name] [ ip | domain]                       更改 serverName
-   seed [name] [seed | auto]                       更改 mKCP seed
-   new [name] [...]                                更改协议
-   web [name] [domain]                             更改伪装网站
-
-进阶:
-   dns [...]                                       设置 DNS
-   dd, ddel [name...]                              删除多个配置**
-   fix [name]                                      修复一个配置
-   fix-all                                         修复全部配置
-   fix-caddyfile                                   修复 Caddyfile
-   fix-config.json                                 修复 config.json
-
-管理:
-   un, uninstall                                   卸载
-   u, update [core | sh | dat | caddy] [ver]       更新
-   U, update.sh                                    更新脚本
-   s, status                                       运行状态
-   start, stop, restart [caddy]                    启动, 停止, 重启
-   t, test                                         测试运行
-   reinstall                                       重装脚本
-
-测试:
-   client [name]                                   显示用于客户端 JSON, 仅供参考
-   debug [name]                                    显示一些 debug 信息, 仅供参考
-   gen [...]                                       同等于 add, 但只显示 JSON 内容, 不创建文件, 测试使用
-   genc [name]                                     显示用于客户端部分 JSON, 仅供参考
-   no-auto-tls [...]                               同等于 add, 但禁止自动配置 TLS, 可用于 *TLS 相关协议
-   xapi [...]                                      同等于 xray api, 但 API 后端使用当前运行的 Xray 服务
-
-其他:
-   bbr                                             启用 BBR, 如果支持
-   bin [...]                                       运行 Xray 命令, 例如: xray bin help
-   api, x25519, tls, run, uuid  [...]              兼容 Xray 命令
-   h, help                                         显示此帮助界面
-
-谨慎使用 del, ddel, 此选项会直接删除配置; 无需确认
-反馈问题) https://github.com/233boy/xray/issues
-文档(doc) https://233boy.com/xray/xray-script/
+/usr/local/bin/xray             # Comando global
 ```
+
+---
+
+## 💻 Uso do Sistema
+
+### Menu Principal
+
+```bash
+xray
+```
+
+Opções do menu:
+1. **Gerenciar Usuários** - Submenu de gerenciamento
+2. **Monitorar Tráfego** - Submenu de monitoramento
+3. **Verificar Vencimentos** - Submenu de expiração
+4. **Adicionar Configuração** - Criar novo protocolo
+5. **Alterar Configuração** - Modificar existente
+6. **Ver Configuração** - Ver info e links
+7. **Deletar Configuração** - Remover protocolo
+8. **Gerenciar Serviços** - Start/Stop/Restart
+9. **Atualizar** - Atualizar Xray/Script
+10. **Desinstalar** - Remover sistema
+11. **Ajuda** - Ver documentação
+12. **Outros** - BBR, Logs, DNS, etc.
+13. **Sobre** - Informações do sistema
+
+### Comandos Rápidos (CLI)
+
+#### Gerenciamento de Usuários
+
+```bash
+# Adicionar usuário
+xray add-user joao 30 vless
+xray adduser maria 60 vmess
+
+# Listar usuários
+xray list-users
+xray users
+
+# Ver detalhes
+xray view-user joao
+
+# Deletar usuário
+xray del-user joao
+xray deluser maria
+
+# Renovar (adicionar mais dias)
+xray renew-user joao 30
+```
+
+#### Monitoramento de Tráfego
+
+```bash
+# Ver tráfego de todos
+xray traffic
+xray traf
+
+# Ver tráfego de um usuário
+xray traffic-user joao
+
+# Atualizar estatísticas
+xray traffic-update
+
+# Monitoramento em tempo real
+xray traffic-monitor
+xray monitor
+```
+
+#### Verificação de Vencimentos
+
+```bash
+# Verificar expirados agora
+xray check-expired
+xray expired
+
+# Listar expirados
+xray list-expired
+
+# Listar que expiram em breve
+xray expiring-soon
+xray expiring-soon 3
+
+# Limpar expirados antigos
+xray clean-expired
+xray clean-expired 60
+
+# Reativar usuário
+xray reactivate-user joao 30
+
+# Configurar verificação automática
+xray setup-auto-check
+```
+
+#### Gerenciamento do Sistema
+
+```bash
+# Iniciar/Parar/Reiniciar
+xray start
+xray stop
+xray restart
+xray status
+
+# Ver logs
+xray log
+xray logerr
+
+# Atualizar
+xray update
+
+# Desinstalar
+xray uninstall
+
+# Ajuda
+xray help
+```
+
+---
+
+## 📖 Exemplos Práticos
+
+### Exemplo 1: Criar novo usuário
+
+```bash
+# Via menu interativo
+xray
+> 1 (Gerenciar Usuários)
+> 1 (Adicionar novo usuário)
+> Nome: joao_silva
+> Dias: 30
+> Protocolo: vless
+
+# Via CLI
+xray add-user joao_silva 30 vless
+```
+
+**Resultado:**
+```
+✓ Usuário criado com sucesso!
+
+═══════════════════════════════════════
+  INFORMAÇÕES DO USUÁRIO
+═══════════════════════════════════════
+Nome: joao_silva
+UUID: 4d6e0338-f67a-4187-bca3-902e232466bc
+Protocolo: vless
+Criado em: 31/10/2025 19:30:00
+Expira em: 30/11/2025 19:30:00
+Dias de validade: 30 dias
+Status: Ativo
+═══════════════════════════════════════
+```
+
+### Exemplo 2: Gerar link VLESS
+
+```bash
+xray
+> 1 (Gerenciar Usuários)
+> 7 (Gerar link VLESS com QR Code)
+> Nome: joao_silva
+```
+
+**Resultado:**
+```
+═══════════════════════════════════════════════════════════════════
+  LINK VLESS - joao_silva
+═══════════════════════════════════════════════════════════════════
+
+Link de Conexão:
+vless://4d6e0338-f67a-4187-bca3-902e232466bc@SEU_IP:443?
+encryption=none&flow=xtls-rprx-vision&security=reality&
+sni=www.google.com&fp=chrome&type=tcp&headerType=none#joao_silva
+
+QR Code:
+[QR CODE AQUI]
+
+═══════════════════════════════════════════════════════════════════
+```
+
+### Exemplo 3: Monitorar tráfego
+
+```bash
+xray traffic
+```
+
+**Resultado:**
+```
+═══════════════════════════════════════════════════════════════════
+  ESTATÍSTICAS DE TRÁFEGO - Total de usuários: 5
+═══════════════════════════════════════════════════════════════════
+
+USUÁRIO              TRÁFEGO (MB)    STATUS          EXPIRA EM
+───────────────────────────────────────────────────────────────────
+joao_silva           1250.45         active          30/11/2025
+maria_souza          890.23          active          15/12/2025
+pedro_santos         2450.67         expired         10/10/2025
+ana_lima             340.12          active          05/01/2026
+carlos_rocha         1567.89         active          20/11/2025
+
+═══════════════════════════════════════════════════════════════════
+```
+
+### Exemplo 4: Verificar vencimentos
+
+```bash
+xray expiring-soon 7
+```
+
+**Resultado:**
+```
+═══════════════════════════════════════════════════════════════════
+  USUÁRIOS QUE EXPIRAM NOS PRÓXIMOS 7 DIAS
+═══════════════════════════════════════════════════════════════════
+
+USUÁRIO              DIAS RESTANTES  EXPIRA EM
+───────────────────────────────────────────────────────────────────
+joao_silva           3               30/11/2025
+carlos_rocha         6               20/11/2025
+
+═══════════════════════════════════════════════════════════════════
+```
+
+---
+
+## ⚙️ Configuração Avançada
+
+### Habilitar API Stats do Xray
+
+```bash
+xray
+> 2 (Monitorar Tráfego)
+> 8 (Habilitar API Stats do Xray)
+```
+
+Ou via CLI:
+```bash
+bash /etc/xray/sh/src/traffic-monitor.sh enable-api
+```
+
+### Configurar Verificação Automática de Vencimentos
+
+```bash
+xray setup-auto-check
+```
+
+Isso criará um cron job que verifica usuários expirados:
+- Todos os dias às 00:00
+- A cada 6 horas
+
+### Exportar Relatório de Tráfego
+
+```bash
+xray
+> 2 (Monitorar Tráfego)
+> 7 (Exportar relatório)
+```
+
+Relatório salvo em: `/etc/xray/users/traffic_report_YYYYMMDD_HHMMSS.txt`
+
+---
+
+## 🔧 Configuração do Banco de Dados
+
+O banco de dados de usuários está em: `/etc/xray/users/users.json`
+
+### Estrutura do JSON
+
+```json
+[
+  {
+    "username": "joao_silva",
+    "uuid": "4d6e0338-f67a-4187-bca3-902e232466bc",
+    "protocol": "vless",
+    "created_at": "1730409000",
+    "expires_at": "1733087400",
+    "expires_readable": "30/11/2025 19:30:00",
+    "status": "active",
+    "traffic_used": 1250.45,
+    "last_connection": null
+  }
+]
+```
+
+---
+
+## 🐛 Troubleshooting
+
+### Problema: API Stats não funciona
+
+**Solução:**
+```bash
+bash /etc/xray/sh/src/traffic-monitor.sh enable-api
+systemctl restart xray
+```
+
+### Problema: Usuários não expiram automaticamente
+
+**Solução:**
+```bash
+# Verificar se cron está ativo
+crontab -l
+
+# Configurar verificação automática
+xray setup-auto-check
+
+# Verificar manualmente
+xray check-expired
+```
+
+### Problema: Link VLESS não funciona
+
+**Solução:**
+```bash
+# Verificar se usuário existe
+xray view-user nome_do_usuario
+
+# Verificar configuração do Xray
+cat /etc/xray/config.json | jq '.inbounds[]'
+
+# Testar conexão
+xray test-run
+```
+
+### Problema: QR Code não aparece
+
+**Solução:**
+```bash
+# Instalar qrencode
+apt-get install qrencode -y  # Debian/Ubuntu
+yum install qrencode -y      # CentOS/RHEL
+```
+
+---
+
+## 📚 Documentação Adicional
+
+### Arquivos de Log
+
+```bash
+# Log principal do Xray
+tail -f /var/log/xray/access.log
+tail -f /var/log/xray/error.log
+
+# Log de tráfego
+tail -f /etc/xray/users/traffic.log
+
+# Log de expirações
+tail -f /etc/xray/users/expiration.log
+```
+
+### Backup do Sistema
+
+```bash
+# Backup completo
+tar -czf xray2026-backup-$(date +%Y%m%d).tar.gz /etc/xray /var/log/xray
+
+# Restaurar
+tar -xzf xray2026-backup-YYYYMMDD.tar.gz -C /
+systemctl restart xray
+```
+
+### Atualização do Sistema
+
+```bash
+# Atualizar Xray-core
+xray update
+> 1 (Atualizar Xray)
+
+# Atualizar scripts
+xray update
+> 2 (Atualizar Script)
+```
+
+---
+
+## 🤝 Contribuindo
+
+Contribuições são bem-vindas! Por favor:
+
+1. Fork o projeto
+2. Crie uma branch para sua feature (`git checkout -b feature/NovaFuncionalidade`)
+3. Commit suas mudanças (`git commit -m 'Adiciona nova funcionalidade'`)
+4. Push para a branch (`git push origin feature/NovaFuncionalidade`)
+5. Abra um Pull Request
+
+---
+
+## 📄 Licença
+
+Este projeto está sob a licença GPL-3.0. Veja o arquivo [LICENSE](LICENSE) para mais detalhes.
+
+---
+
+## 🙏 Agradecimentos
+
+- [XTLS/Xray-core](https://github.com/XTLS/Xray-core) - Core do projeto
+- [233boy/Xray](https://github.com/233boy/Xray) - Script original
+
+---
+
+## 📞 Suporte
+
+- **Issues:** https://github.com/PhoenixxZ2023/xray2026/issues
+- **Discussões:** https://github.com/PhoenixxZ2023/xray2026/discussions
+
+---
+
+**Desenvolvido com ❤️ por PhoenixxZ2023**
