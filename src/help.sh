@@ -1,94 +1,310 @@
-show_help() {
-    case $1 in
-    api | x25519 | tls | run | uuid | version)
-        $is_core_bin help $1 ${@:2}
-        ;;
-    *)
-        [[ $1 ]] && warn "未知选项 '$1'"
-        msg "$is_core_name script $is_sh_ver by $author"
-        msg "Usage: $is_core [options]... [args]... "
-        msg
-        help_info=(
-            "基本:"
-            "   v, version                                      显示当前版本"
-            "   ip                                              返回当前主机的 IP"
-            "   pbk                                             同等于 $is_core x25519"
-            "   get-port                                        返回一个可用的端口"
-            "   ss2022                                          返回一个可用于 Shadowsocks 2022 的密码\n"
-            "一般:"
-            "   a, add [protocol] [args... | auto]              添加配置"
-            "   c, change [name] [option] [args... | auto]      更改配置"
-            "   d, del [name]                                   删除配置**"
-            "   i, info [name]                                  查看配置"
-            "   qr [name]                                       二维码信息"
-            "   url [name]                                      URL 信息"
-            "   log                                             查看日志"
-            "   logerr                                          查看错误日志\n"
-            "更改:"
-            "   dp, dynamicport [name] [start | auto] [end]     更改动态端口"
-            "   full [name] [...]                               更改多个参数"
-            "   id [name] [uuid | auto]                         更改 UUID"
-            "   host [name] [domain]                            更改域名"
-            "   port [name] [port | auto]                       更改端口"
-            "   path [name] [path | auto]                       更改路径"
-            "   passwd [name] [password | auto]                 更改密码"
-            "   key [name] [Private key | atuo] [Public key]    更改密钥"
-            "   type [name] [type | auto]                       更改伪装类型"
-            "   method [name] [method | auto]                   更改加密方式"
-            "   sni [name] [ ip | domain]                       更改 serverName"
-            "   seed [name] [seed | auto]                       更改 mKCP seed"
-            "   new [name] [...]                                更改协议"
-            "   web [name] [domain]                             更改伪装网站\n"
-            "进阶:"
-            "   dns [...]                                       设置 DNS"
-            "   dd, ddel [name...]                              删除多个配置**"
-            "   fix [name]                                      修复一个配置"
-            "   fix-all                                         修复全部配置"
-            "   fix-caddyfile                                   修复 Caddyfile"
-            "   fix-config.json                                 修复 config.json\n"
-            "管理:"
-            "   un, uninstall                                   卸载"
-            "   u, update [core | sh | dat | caddy] [ver]       更新"
-            "   U, update.sh                                    更新脚本"
-            "   s, status                                       运行状态"
-            "   start, stop, restart [caddy]                    启动, 停止, 重启"
-            "   t, test                                         测试运行"
-            "   reinstall                                       重装脚本\n"
-            "测试:"
-            "   client [name]                                   显示用于客户端 JSON, 仅供参考"
-            "   debug [name]                                    显示一些 debug 信息, 仅供参考"
-            "   gen [...]                                       同等于 add, 但只显示 JSON 内容, 不创建文件, 测试使用"
-            "   genc [name]                                     显示用于客户端部分 JSON, 仅供参考"
-            "   no-auto-tls [...]                               同等于 add, 但禁止自动配置 TLS, 可用于 *TLS 相关协议"
-            "   xapi [...]                                      同等于 $is_core api, 但 API 后端使用当前运行的 $is_core_name 服务\n"
-            "其他:"
-            "   bbr                                             启用 BBR, 如果支持"
-            "   bin [...]                                       运行 $is_core_name 命令, 例如: $is_core bin help"
-            "   api, x25519, tls, run, uuid  [...]              兼容 $is_core_name 命令"
-            "   h, help                                         显示此帮助界面\n"
-        )
-        for v in "${help_info[@]}"; do
-            msg "$v"
-        done
-        msg "谨慎使用 del, ddel, 此选项会直接删除配置; 无需确认"
-        msg "反馈问题) $(msg_ul https://github.com/${is_sh_repo}/issues) "
-        msg "文档(doc) $(msg_ul https://233boy.com/$is_core/$is_core-script/)"
-        ;;
+#!/bin/bash
 
-    esac
+# Xray2026 - Sistema de Ajuda
+# Autor: PhoenixxZ2023
+# GitHub: https://github.com/PhoenixxZ2023/xray2026
+# Baseado no script original de 233boy
+
+show_help() {
+    cat <<EOF
+
+═══════════════════════════════════════════════════════════════════
+  Xray2026 Script $is_sh_ver by PhoenixxZ2023
+═══════════════════════════════════════════════════════════════════
+
+Uso: xray [opções]... [argumentos]...
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ BÁSICO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  v, version               Exibe a versão atual
+  ip                       Retorna o endereço IP do servidor
+  pbk                      Equivalente a xray x25519
+  get-port                 Retorna uma porta disponível
+  ss2022                   Retorna uma senha para Shadowsocks 2022
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ GERENCIAMENTO DE USUÁRIOS (NOVO)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  add-user <nome> <dias> [protocolo]    Adicionar usuário
+  list-users                             Listar todos os usuários
+  view-user <nome>                       Ver detalhes do usuário
+  del-user <nome>                        Deletar usuário
+  renew-user <nome> <dias>               Renovar usuário (adicionar dias)
+  
+  Exemplos:
+    xray add-user joao 30 vless
+    xray list-users
+    xray renew-user joao 15
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ MONITORAMENTO DE TRÁFEGO (NOVO)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  traffic                                Ver tráfego de todos
+  traffic-user <nome>                    Ver tráfego de um usuário
+  traffic-update                         Atualizar estatísticas
+  traffic-monitor                        Monitoramento em tempo real
+  
+  Exemplos:
+    xray traffic
+    xray traffic-user joao
+    xray monitor
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ VERIFICAÇÃO DE VENCIMENTOS (NOVO)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  check-expired                          Verificar usuários expirados
+  list-expired                           Listar usuários expirados
+  expiring-soon [dias]                   Listar próximos a expirar (padrão: 7)
+  clean-expired [dias]                   Limpar expirados antigos (padrão: 30)
+  reactivate-user <nome> <dias>          Reativar usuário expirado
+  setup-auto-check                       Configurar verificação automática
+  
+  Exemplos:
+    xray check-expired
+    xray expiring-soon 3
+    xray reactivate-user joao 30
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ GERAL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  a, add [protocolo] [args... | auto]   Adicionar configuração
+  c, change [nome] [opção] [args...]     Alterar configuração
+  d, del [nome]                          Deletar configuração
+  i, info [nome]                         Ver informações da configuração
+  qr [nome]                              Informações em QR Code
+  url [nome]                             Informações em URL
+  log                                    Ver log
+  logerr                                 Ver log de erros
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ ALTERAÇÕES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  dp, dynamicport [nome] [início] [fim]  Alterar porta dinâmica
+  full [nome] [...]                      Alterar múltiplos parâmetros
+  id [nome] [uuid | auto]                Alterar UUID
+  host [nome] [domínio]                  Alterar domínio
+  port [nome] [porta | auto]             Alterar porta
+  path [nome] [caminho | auto]           Alterar caminho
+  passwd [nome] [senha | auto]           Alterar senha
+  key [nome] [chave_privada | auto]      Alterar chave
+  type [nome] [tipo | auto]              Alterar tipo de disfarce
+  method [nome] [método | auto]          Alterar método de criptografia
+  sni [nome] [ip | domínio]              Alterar serverName
+  seed [nome] [seed | auto]              Alterar mKCP seed
+  new [nome] [...]                       Alterar protocolo
+  web [nome] [domínio]                   Alterar site de disfarce
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ AVANÇADO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  dns [...]                              Configurar DNS
+  dd, ddel [nome...]                     Deletar múltiplas configurações
+  fix [nome]                             Corrigir uma configuração
+  fix-all                                Corrigir todas as configurações
+  fix-caddyfile                          Corrigir Caddyfile
+  fix-config.json                        Corrigir config.json
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ GERENCIAMENTO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  un, uninstall                          Desinstalar
+  u, update [core | sh | dat | caddy]    Atualizar componentes
+  U, update.sh                           Atualizar script
+  s, status                              Status de execução
+  start, stop, restart [caddy]           Iniciar, parar, reiniciar
+  t, test                                Testar execução
+  reinstall                              Reinstalar script
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ TESTES E DEBUG
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  client [nome]                          Exibe JSON para o cliente
+  debug [nome]                           Exibe informações de debug
+  gen [...]                              Gera JSON sem criar arquivos
+  genc [nome]                            Exibe JSON do cliente
+  no-auto-tls [...]                      Desabilita TLS automático
+  xapi [...]                             Equivalente a xray api
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ OUTROS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  bbr                                    Ativar BBR (se suportado)
+  bin [...]                              Executar comandos Xray
+  api, x25519, tls, run, uuid [...]      Comandos compatíveis com Xray
+  h, help                                Exibir esta ajuda
+
+═══════════════════════════════════════════════════════════════════
+  CUIDADO
+═══════════════════════════════════════════════════════════════════
+
+  Ao usar 'del' e 'ddel', as configurações serão deletadas diretamente
+  sem confirmação. Use com cuidado!
+
+═══════════════════════════════════════════════════════════════════
+  LINKS ÚTEIS
+═══════════════════════════════════════════════════════════════════
+
+  Reportar problemas: https://github.com/PhoenixxZ2023/xray2026/issues
+  Documentação:       https://github.com/PhoenixxZ2023/xray2026
+  Telegram:           [Seu canal/grupo]
+
+═══════════════════════════════════════════════════════════════════
+
+EOF
 }
 
 about() {
-    ####### 要点13脸吗只会改我链接的小人 #######
-    unset c n m s b
-    msg
-    msg "网站: $(msg_ul https://233boy.com)"
-    msg "频道: $(msg_ul https://t.me/tg2333)"
-    msg "群组: $(msg_ul https://t.me/tg233boy)"
-    msg "Github: $(msg_ul https://github.com/${is_sh_repo})"
-    msg "Twitter: $(msg_ul https://twitter.com/ai233boy)"
-    msg "$is_core_name site: $(msg_ul https://xtls.github.io)"
-    msg "$is_core_name core: $(msg_ul https://github.com/${is_core_repo})"
-    msg
-    ####### 要点13脸吗只会改我链接的小人 #######
+    cat <<EOF
+
+═══════════════════════════════════════════════════════════════════
+  Sobre o Xray2026
+═══════════════════════════════════════════════════════════════════
+
+  Nome:           Xray2026
+  Versão:         $is_sh_ver
+  Autor:          PhoenixxZ2023
+  Baseado em:     233boy/Xray
+  
+  Xray Core:      $is_core_ver
+  Status:         $is_core_status
+
+───────────────────────────────────────────────────────────────────
+  NOVIDADES DA VERSÃO 2.0
+───────────────────────────────────────────────────────────────────
+
+  ✅ Gerenciamento completo de usuários
+     - Adicionar/Deletar/Listar usuários
+     - Sistema de data de vencimento
+     - Geração automática de UUID
+     - Links VLESS com QR Code
+
+  ✅ Monitoramento de tráfego em tempo real
+     - Estatísticas via API Stats do Xray
+     - Visualização por usuário
+     - Exportação de relatórios
+     - Monitoramento contínuo
+
+  ✅ Verificação automática de vencimento
+     - Desativação automática de expirados
+     - Avisos de vencimento próximo
+     - Limpeza de usuários antigos
+     - Cron job automatizado
+
+  ✅ Interface totalmente em português
+     - Tradução completa de menus
+     - Mensagens claras e intuitivas
+     - Documentação em PT-BR
+
+───────────────────────────────────────────────────────────────────
+  PROTOCOLOS SUPORTADOS
+───────────────────────────────────────────────────────────────────
+
+  • VLESS-REALITY (recomendado)
+  • VLESS-WS-TLS / gRPC / XHTTP
+  • VMess-TCP / mKCP / WS / gRPC
+  • Trojan-WS-TLS / gRPC
+  • Shadowsocks 2022
+  • Socks / Dokodemo-Door
+
+───────────────────────────────────────────────────────────────────
+  ESTRUTURA DE ARQUIVOS
+───────────────────────────────────────────────────────────────────
+
+  Diretório principal:  /etc/xray
+  Scripts:              /etc/xray/sh
+  Core:                 /etc/xray/bin
+  Configurações:        /etc/xray/conf
+  Usuários:             /etc/xray/users
+  Logs:                 /var/log/xray
+
+───────────────────────────────────────────────────────────────────
+  COMANDOS RÁPIDOS
+───────────────────────────────────────────────────────────────────
+
+  xray                    - Menu principal
+  xray add-user           - Adicionar usuário
+  xray list-users         - Listar usuários
+  xray traffic            - Ver tráfego
+  xray check-expired      - Verificar expirados
+  xray help               - Ajuda completa
+
+───────────────────────────────────────────────────────────────────
+  SUPORTE
+───────────────────────────────────────────────────────────────────
+
+  GitHub:     https://github.com/PhoenixxZ2023/xray2026
+  Issues:     https://github.com/PhoenixxZ2023/xray2026/issues
+  Wiki:       https://github.com/PhoenixxZ2023/xray2026/wiki
+
+───────────────────────────────────────────────────────────────────
+  LICENÇA
+───────────────────────────────────────────────────────────────────
+
+  GPL-3.0 License
+  Copyright (c) 2025 PhoenixxZ2023
+  
+  Este projeto é baseado no trabalho de 233boy
+  Agradecimentos especiais ao XTLS/Xray-core
+
+═══════════════════════════════════════════════════════════════════
+  Desenvolvido com ❤️ por PhoenixxZ2023
+═══════════════════════════════════════════════════════════════════
+
+EOF
 }
+
+# Funções auxiliares para exibir informações específicas
+
+show_version() {
+    echo ""
+    echo "Xray2026 Script: $is_sh_ver"
+    echo "Xray Core: $is_core_ver"
+    echo "Autor: PhoenixxZ2023"
+    echo "GitHub: https://github.com/PhoenixxZ2023/xray2026"
+    echo ""
+}
+
+show_ip() {
+    get_ip
+    echo ""
+    echo "═══════════════════════════════════════"
+    echo "  IP DO SERVIDOR"
+    echo "═══════════════════════════════════════"
+    echo "  IPv4: $ip"
+    echo "═══════════════════════════════════════"
+    echo ""
+}
+
+show_status() {
+    echo ""
+    echo "═══════════════════════════════════════"
+    echo "  STATUS DO SISTEMA"
+    echo "═══════════════════════════════════════"
+    echo "  Xray Core:    $is_core_status"
+    [[ $is_caddy ]] && echo "  Caddy:        $is_caddy_status"
+    echo ""
+    echo "  Xray Version: $is_core_ver"
+    [[ $is_caddy ]] && echo "  Caddy Version: $is_caddy_ver"
+    echo "═══════════════════════════════════════"
+    echo ""
+}
+
+# Atalhos de comando
+case "$1" in
+    version | v)
+        show_version
+        ;;
+    ip)
+        show_ip
+        ;;
+    status | s)
+        show_status
+        ;;
+    help | h | "")
+        show_help
+        ;;
+    about)
+        about
+        ;;
+esac
