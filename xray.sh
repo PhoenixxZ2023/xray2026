@@ -8,7 +8,7 @@
 # ============================================================================
 
 # Versão do script
-args=$@
+main "$@"
 is_sh_ver=v1.31
 
 # Carregar módulo de inicialização
