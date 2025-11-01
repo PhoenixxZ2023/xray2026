@@ -8,27 +8,76 @@
 # Baseado no script original de 233boy
 # ============================================================================
 
+# ========== INICIALIZAÇÃO DE VARIÁVEIS GLOBAIS ==========
+
+# Versão do script
+is_sh_ver="2.0"
+
+# Diretórios principais
+is_core="xray"
+is_core_name="Xray"
+is_core_dir="/etc/xray"
+is_conf_dir="/etc/xray/conf"
+is_config_json="/etc/xray/config.json"
+is_sh_dir="/etc/xray"
+is_log_dir="/var/log/xray"
+
+# Binários
+is_core_bin="/usr/local/bin/xray"
+is_sh_bin="/usr/local/bin/xray"
+
+# Caddy (se instalado)
+is_caddy="caddy"
+is_caddy_bin="/usr/local/bin/caddy"
+is_caddy_dir="/etc/caddy"
+is_caddy_conf="/etc/caddy/conf"
+is_caddyfile="/etc/caddy/Caddyfile"
+
+# Portas padrão
+is_http_port=80
+is_https_port=443
+
+# Repositórios
+is_core_repo="XTLS/Xray-core"
+is_sh_repo="PhoenixxZ2023/xray2026"
+is_caddy_repo="caddyserver/caddy"
+
+# Arquitetura
+is_core_arch=$(uname -m)
+case $is_core_arch in
+    x86_64 | amd64)
+        is_core_arch="64"
+        caddy_arch="amd64"
+        ;;
+    aarch64 | arm64)
+        is_core_arch="arm64-v8a"
+        caddy_arch="arm64"
+        ;;
+    armv7l)
+        is_core_arch="arm32-v7a"
+        caddy_arch="armv7"
+        ;;
+    *)
+        echo "ERRO: Arquitetura não suportada: $is_core_arch"
+        exit 1
+        ;;
+esac
+
 # ========== LISTAS DE PROTOCOLOS ==========
 protocol_list=(
     VMess-TCP
     VMess-mKCP
-    # VMess-QUIC
-    # VMess-H2-TLS
     VMess-WS-TLS
     VMess-gRPC-TLS
-    # VLESS-H2-TLS
     VLESS-WS-TLS
     VLESS-gRPC-TLS
     VLESS-XHTTP-TLS
     VLESS-REALITY
-    # Trojan-H2-TLS
     Trojan-WS-TLS
     Trojan-gRPC-TLS
     Shadowsocks
-    # Dokodemo-Door
     VMess-TCP-dynamic-port
     VMess-mKCP-dynamic-port
-    # VMess-QUIC-dynamic-port
     Socks
 )
 
@@ -55,19 +104,19 @@ header_type_list=(
 
 # ========== MENU PRINCIPAL ==========
 mainmenu=(
-    "Gerenciar Usuários"           # 1 - NOVO: Submenu de gerenciamento
-    "Monitorar Tráfego"            # 2 - NOVO: Submenu de tráfego
-    "Verificar Vencimentos"        # 3 - NOVO: Submenu de expiração
-    "Adicionar Configuração"       # 4 - Add config
-    "Alterar Configuração"         # 5 - Change config
-    "Ver Configuração"             # 6 - View config
-    "Deletar Configuração"         # 7 - Delete config
-    "Gerenciar Serviços"           # 8 - Manage services
-    "Atualizar"                    # 9 - Update
-    "Desinstalar"                  # 10 - Uninstall
-    "Ajuda"                        # 11 - Help
-    "Outros"                       # 12 - Others
-    "Sobre"                        # 13 - About
+    "Gerenciar Usuários"
+    "Monitorar Tráfego"
+    "Verificar Vencimentos"
+    "Adicionar Configuração"
+    "Alterar Configuração"
+    "Ver Configuração"
+    "Deletar Configuração"
+    "Gerenciar Serviços"
+    "Atualizar"
+    "Desinstalar"
+    "Ajuda"
+    "Outros"
+    "Sobre"
 )
 
 # ========== LISTA DE INFORMAÇÕES ==========
@@ -121,60 +170,49 @@ EXPIRATION_LOG="/etc/xray/users/expiration.log"
 
 # ========== FUNÇÕES DE MENSAGENS COLORIDAS ==========
 
-# Mensagem normal
 msg() {
     echo -e "$@"
 }
 
-# Texto sublinhado
 msg_ul() {
     echo -e "\e[4m$@\e[0m"
 }
 
-# Texto verde (sucesso)
 _green() {
     echo -e "\e[32m$@\e[0m"
 }
 
-# Texto vermelho (erro)
 _red() {
     echo -e "\e[31m$@\e[0m"
 }
 
-# Texto amarelo (aviso)
 _yellow() {
     echo -e "\e[33m$@\e[0m"
 }
 
-# Texto azul (informação)
 _blue() {
     echo -e "\e[34m$@\e[0m"
 }
 
-# Texto ciano
 _cyan() {
     echo -e "\e[36m$@\e[0m"
 }
 
-# Mensagem de erro e sair
 err() {
     _red "ERRO: $@"
     exit 1
 }
 
-# Mensagem de aviso
 warn() {
     _yellow "AVISO: $@"
 }
 
 # ========== FUNÇÕES AUXILIARES BÁSICAS ==========
 
-# Pausar execução
 pause() {
     read -rsp $'Pressione qualquer tecla para continuar...\n' -n1
 }
 
-# Obter UUID aleatório
 get_uuid() {
     if [[ $(type -P uuidgen) ]]; then
         uuidgen
@@ -183,20 +221,17 @@ get_uuid() {
     fi
 }
 
-# Obter IP do servidor
 get_ip() {
     if [[ -z $ip ]]; then
         local tmp_ip=$(curl -s https://api.ipify.org)
         if [[ $tmp_ip ]]; then
             ip=$tmp_ip
         else
-            # Fallback: usar IP local
             ip=$(hostname -I | awk '{print $1}')
         fi
     fi
 }
 
-# Obter porta disponível
 get_port() {
     local port
     while :; do
@@ -208,7 +243,6 @@ get_port() {
     done
 }
 
-# Gerar senha para Shadowsocks 2022
 get_ss2022_password() {
     local method=$1
     case $method in
@@ -224,12 +258,10 @@ get_ss2022_password() {
     esac
 }
 
-# Verificar se é root
 check_root() {
     [[ $EUID != 0 ]] && err "Este script deve ser executado como root (use sudo)"
 }
 
-# Verificar sistema operacional
 check_os() {
     if [[ -f /etc/os-release ]]; then
         . /etc/os-release
@@ -240,7 +272,6 @@ check_os() {
     fi
 }
 
-# Verificar dependências
 check_dependencies() {
     local deps=(curl wget jq systemctl)
     local missing=()
@@ -266,7 +297,6 @@ check_dependencies() {
     fi
 }
 
-# Carregar arquivos auxiliares
 load() {
     local file=$1
     local path="$is_sh_dir/src/$file"
@@ -276,6 +306,68 @@ load() {
     else
         err "Arquivo não encontrado: $file"
     fi
+}
+
+# Gerar caminho aleatório
+_get_random_path() {
+    cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 8 | head -n 1
+}
+
+# ========== FUNÇÕES ADICIONAIS CORRIGIDAS ==========
+
+# Função _wget com fallback para curl
+_wget() {
+    if command -v wget &>/dev/null; then
+        wget "$@"
+    elif command -v curl &>/dev/null; then
+        # Traduzir opções wget para curl
+        local url=""
+        local output=""
+        local args=()
+        
+        while [[ $# -gt 0 ]]; do
+            case $1 in
+                -O)
+                    output="$2"
+                    shift 2
+                    ;;
+                -qO-)
+                    args+=(-s)
+                    shift
+                    ;;
+                -t)
+                    # Ignorar tentativas do wget
+                    shift 2
+                    ;;
+                -c)
+                    # Continue: curl não precisa
+                    shift
+                    ;;
+                *)
+                    url="$1"
+                    shift
+                    ;;
+            esac
+        done
+        
+        if [[ $output ]]; then
+            curl -L "${args[@]}" -o "$output" "$url"
+        else
+            curl -L "${args[@]}" "$url"
+        fi
+    else
+        err "wget ou curl não encontrado. Instale um deles."
+    fi
+}
+
+# Função show_version
+show_version() {
+    echo ""
+    echo "Xray2026 Script: $is_sh_ver"
+    [[ -f $is_core_bin ]] && echo "Xray Core: $($is_core_bin version | head -n1 | awk '{print $2}')"
+    echo "Autor: PhoenixxZ2023"
+    echo "GitHub: https://github.com/PhoenixxZ2023/xray2026"
+    echo ""
 }
 # ============================================================================
 # SEÇÃO 2: FUNÇÕES AUXILIARES AVANÇADAS
@@ -1946,6 +2038,74 @@ restore_backup() {
     
     _green "✓ Backup restaurado com sucesso!"
 }
+show_backup_menu() {
+    while :; do
+        clear
+        msg "\n═══════════════════════════════════════"
+        msg "  BACKUP E RESTAURAÇÃO"
+        msg "═══════════════════════════════════════"
+        msg "  1) Fazer backup completo"
+        msg "  2) Restaurar último backup"
+        msg "  3) Listar backups disponíveis"
+        msg "  4) Deletar backups antigos"
+        msg ""
+        msg "  0) Voltar"
+        msg "═══════════════════════════════════════\n"
+        
+        read -p "Escolha uma opção: " option
+        
+        case $option in
+            1) backup_config ;;
+            2) restore_backup ;;
+            3) ls -lh /tmp/xray_backup_* 2>/dev/null || msg "Nenhum backup encontrado" ;;
+            4) 
+                read -p "Deletar backups com mais de quantos dias? [7]: " days
+                find /tmp -name "xray_backup_*" -mtime +${days:-7} -exec rm -rf {} \;
+                _green "✓ Backups antigos removidos"
+                ;;
+            0) break ;;
+            *) warn "Opção inválida!" ;;
+        esac
+        
+        read -p "Pressione ENTER para continuar..."
+    done
+}
+
+show_caddy_menu() {
+    while :; do
+        clear
+        msg "\n═══════════════════════════════════════"
+        msg "  GERENCIAMENTO DO CADDY"
+        msg "═══════════════════════════════════════"
+        msg "  1) Iniciar Caddy"
+        msg "  2) Parar Caddy"
+        msg "  3) Reiniciar Caddy"
+        msg "  4) Ver Status do Caddy"
+        msg "  5) Ver Logs do Caddy"
+        msg "  6) Validar Configuração"
+        msg "  7) Listar Sites"
+        msg ""
+        msg "  0) Voltar"
+        msg "═══════════════════════════════════════\n"
+        
+        read -p "Escolha uma opção: " option
+        
+        case $option in
+            1) manage start caddy ;;
+            2) manage stop caddy ;;
+            3) manage restart caddy ;;
+            4) manage status caddy ;;
+            5) journalctl -u caddy -n 50 --no-pager ;;
+            6) $is_caddy_bin validate --config $is_caddyfile --adapter caddyfile ;;
+            7) load caddy.sh && list_caddy_sites ;;
+            0) break ;;
+            *) warn "Opção inválida!" ;;
+        esac
+        
+        read -p "Pressione ENTER para continuar..."
+    done
+}
+
 # ============================================================================
 # SEÇÃO 6: FUNÇÃO ADD - ADICIONAR CONFIGURAÇÕES
 # Wrapper principal para criar novas configurações
@@ -3006,6 +3166,9 @@ main() {
     
     # Verificar sistema operacional
     check_os
+    
+    # ⚠️ ADICIONAR ESTA LINHA:
+    check_dependencies
     
     # Carregar variáveis de ambiente
     [[ -f /etc/xray/env.conf ]] && source /etc/xray/env.conf
