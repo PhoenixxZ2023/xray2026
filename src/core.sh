@@ -3382,6 +3382,3 @@ show_others_menu() {
 }
 
 # ========== INICIALIZAR SCRIPT ==========
-
-# Executar função principal
-main "$@"
