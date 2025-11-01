@@ -73,6 +73,7 @@ protocol_list=(
     VLESS-gRPC-TLS
     VLESS-XHTTP-TLS
     VLESS-REALITY
+    VLESS-XTLS 
     Trojan-WS-TLS
     Trojan-gRPC-TLS
     Shadowsocks
@@ -1733,6 +1734,9 @@ change_protocol() {
         *WS*)
             create_vless_ws_tls "$config_name"
             ;;
+        VLESS-XTLS)
+            create_vless_xtls "$config_name"
+            ;;
         VMess-TCP)
             create_vmess_tcp "$config_name"
             ;;
@@ -2340,6 +2344,9 @@ add() {
         VLESS-XHTTP-TLS)
             create_vless_xhttp_tls "$config_name"
             ;;
+        VLESS-XTLS)
+            create_vless_xtls "$config_name"
+            ;;
         VMess-TCP)
             create_vmess_tcp "$config_name"
             ;;
@@ -2543,6 +2550,139 @@ EOF
     add_inbound_to_main "$name"
     
     msg "\n✓ VMess-mKCP criado com sucesso!"
+}
+# ========== CRIAR VLESS-XTLS ==========
+create_vless_xtls() {
+    local config_name="$1"
+    
+    echo ""
+    echo "═══════════════════════════════════════"
+    echo "  CRIAR VLESS-XTLS"
+    echo "═══════════════════════════════════════"
+    echo ""
+    
+    # Gerar UUID e caminho automaticamente
+    local uuid=$(generate_uuid)
+    local path=$(generate_path)
+    
+    _green "✓ UUID gerado: $uuid"
+    _green "✓ Caminho gerado: $path"
+    
+    echo ""
+    
+    # Solicitar porta
+    read -p "Digite a porta [443]: " port
+    port=${port:-443}
+    
+    # Solicitar domínio com verificação
+    local domain=$(ask_domain)
+    
+    echo ""
+    _green "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    _green "  RESUMO DA CONFIGURAÇÃO"
+    _green "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "  Nome:      $config_name"
+    echo "  Protocolo: VLESS-XTLS"
+    echo "  UUID:      $uuid"
+    echo "  Porta:     $port"
+    echo "  Domínio:   $domain"
+    echo "  Caminho:   $path"
+    echo ""
+    
+    read -p "Confirmar criação? (S/n): " confirm
+    if [[ "$confirm" == "n" || "$confirm" == "N" ]]; then
+        _yellow "Criação cancelada"
+        return 1
+    fi
+    
+    echo ""
+    _yellow "⏳ Criando configuração..."
+    
+    # Criar arquivo JSON
+    cat > "$is_conf_dir/$config_name.json" <<EOF
+{
+  "protocol": "vless",
+  "port": $port,
+  "settings": {
+    "clients": [
+      {
+        "id": "$uuid",
+        "flow": "xtls-rprx-vision",
+        "email": "$config_name@xtls"
+      }
+    ],
+    "decryption": "none"
+  },
+  "streamSettings": {
+    "network": "ws",
+    "security": "xtls",
+    "xtlsSettings": {
+      "serverName": "$domain",
+      "alpn": ["http/1.1"],
+      "certificates": [
+        {
+          "certificateFile": "/etc/letsencrypt/live/$domain/fullchain.pem",
+          "keyFile": "/etc/letsencrypt/live/$domain/privkey.pem"
+        }
+      ]
+    },
+    "wsSettings": {
+      "path": "$path",
+      "headers": {
+        "Host": "$domain"
+      }
+    }
+  },
+  "sniffing": {
+    "enabled": true,
+    "destOverride": ["http", "tls"]
+  }
+}
+EOF
+    
+    # Salvar informações
+    cat > "$is_conf_dir/$config_name.info" <<EOF
+name=$config_name
+protocol=vless
+uuid=$uuid
+address=$domain
+port=$port
+network=ws
+path=$path
+security=xtls
+flow=xtls-rprx-vision
+sni=$domain
+EOF
+    
+    # Reiniciar Xray
+    systemctl restart xray 2>/dev/null
+    
+    echo ""
+    _green "✓ CONFIGURAÇÃO CRIADA COM SUCESSO!"
+    echo ""
+    
+    # Gerar link
+    local link="vless://${uuid}@${domain}:${port}?type=ws&security=xtls&flow=xtls-rprx-vision&path=${path}&sni=${domain}#${config_name}"
+    
+    echo "═══════════════════════════════════════════════════════════"
+    echo "  LINK DE COMPARTILHAMENTO"
+    echo "═══════════════════════════════════════════════════════════"
+    echo ""
+    echo "$link"
+    echo ""
+    
+    # QR Code
+    if command -v qrencode >/dev/null 2>&1; then
+        echo "QR Code:"
+        echo ""
+        qrencode -t ANSIUTF8 "$link"
+        echo ""
+    else
+        _yellow "⚠ Instale qrencode para gerar QR Code: apt install qrencode"
+    fi
+    
+    echo "═══════════════════════════════════════════════════════════"
 }
 
 # Criar configuração VMess-WS-TLS
