@@ -71,7 +71,7 @@ is_log_dir=/var/log/$is_core
 is_sh_bin=/usr/local/bin/$is_core
 is_sh_dir=$is_core_dir/sh
 is_sh_repo=$author/xray2026
-is_pkg="wget unzip"
+is_pkg="wget unzip jq qrencode dnsutils"
 is_config_json=$is_core_dir/config.json
 tmp_var_lists=(
     tmpcore
