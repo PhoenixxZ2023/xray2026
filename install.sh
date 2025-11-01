@@ -94,11 +94,6 @@ for i in ${tmp_var_lists[*]}; do
     export $i=$tmpdir/$i
 done
 
-# Carregar script bash
-load() {
-    . $is_sh_dir/src/$1
-}
-
 # wget adicionar --no-check-certificate
 _wget() {
     [[ $proxy ]] && export https_proxy=$proxy
@@ -295,6 +290,69 @@ exit_and_del_tmpdir() {
     exit
 }
 
+# Criar serviço systemd manualmente (sem carregar systemd.sh)
+create_systemd_service() {
+    local service_file="/lib/systemd/system/${is_core}.service"
+    
+    msg ok "Criando serviço systemd..."
+    
+    cat > $service_file <<EOF
+[Unit]
+Description=Xray Service
+Documentation=https://github.com/xtls
+After=network.target nss-lookup.target
+
+[Service]
+Type=simple
+User=root
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+ExecStart=$is_core_bin run -config $is_config_json -confdir $is_conf_dir
+Restart=on-failure
+RestartPreventExitStatus=23
+LimitNPROC=10000
+LimitNOFILE=1000000
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable $is_core &>/dev/null
+}
+
+# Criar configuração inicial básica
+create_initial_config() {
+    msg ok "Criando configuração inicial..."
+    
+    # Criar config.json básico
+    cat > $is_config_json <<'EOF'
+{
+  "log": {
+    "loglevel": "warning",
+    "access": "/var/log/xray/access.log",
+    "error": "/var/log/xray/error.log"
+  },
+  "inbounds": [],
+  "outbounds": [
+    {
+      "protocol": "freedom",
+      "tag": "direct"
+    },
+    {
+      "protocol": "blackhole",
+      "tag": "block"
+    }
+  ],
+  "routing": {
+    "domainStrategy": "AsIs",
+    "rules": []
+  }
+}
+EOF
+}
+
 # Principal
 main() {
 
@@ -409,7 +467,7 @@ main() {
     # Adicionar alias
     echo "alias $is_core=$is_sh_bin" >>/root/.bashrc
 
-    # Comando core
+    # Comando core - CORRIGIDO: aponta para xray.sh
     ln -sf $is_sh_dir/$is_core.sh $is_sh_bin
 
     # jq
@@ -430,18 +488,14 @@ main() {
     # Mostrar mensagem de dica
     msg ok "Gerando arquivo de configuração..."
 
-    # Criar serviço systemd
-    load systemd.sh
-    is_new_install=1
-    install_service $is_core &>/dev/null
+    # Criar serviço systemd (sem carregar systemd.sh)
+    create_systemd_service
 
     # Criar diretório conf
     mkdir -p $is_conf_dir
 
-    load core.sh
-    
-    # Criar configuração TCP com VLESS-REALITY
-    add reality
+    # Criar configuração inicial básica
+    create_initial_config
     
     # Mostrar informações de instalação concluída
     echo
@@ -451,12 +505,16 @@ main() {
     echo
     msg ok "Execute o comando: ${green}xray${none} para gerenciar"
     msg ok "Execute o comando: ${green}xray help${none} para ajuda"
+    msg ok "Execute o comando: ${green}xray add${none} para adicionar configuração"
     echo
     msg ok "Gerenciamento de usuários disponível!"
     msg ok "Monitoramento de tráfego habilitado!"
-    msg ok "Protocolo VLESS-REALITY ativo!"
+    msg ok "Sistema pronto para configurar protocolos!"
     echo
     echo "=========================================="
+    echo
+    msg warn "PRÓXIMO PASSO: Execute ${green}xray add${none} para criar sua primeira configuração"
+    echo
     
     # Remover diretório tmp e sair
     exit_and_del_tmpdir ok
