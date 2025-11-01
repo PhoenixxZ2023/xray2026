@@ -313,6 +313,181 @@ _get_random_path() {
     cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 8 | head -n 1
 }
 
+# ============================================================================
+# FUNÇÕES AUXILIARES PARA CORE.SH
+# Adicione estas funções no início do seu core.sh (após as variáveis globais)
+# ============================================================================
+
+# Gerar UUID automaticamente
+generate_uuid() {
+    if command -v uuidgen >/dev/null 2>&1; then
+        uuidgen
+    else
+        cat /proc/sys/kernel/random/uuid 2>/dev/null || echo "$(cat /dev/urandom | tr -dc 'a-f0-9' | fold -w 32 | head -n 1 | sed 's/\(.\{8\}\)\(.\{4\}\)\(.\{4\}\)\(.\{4\}\)\(.\{12\}\)/\1-\2-\3-\4-\5/')"
+    fi
+}
+
+# Gerar caminho (path) aleatório
+generate_path() {
+    # Gera caminho aleatório com 8-12 caracteres (letras e números)
+    local length=$((8 + RANDOM % 5))
+    echo "/$(tr -dc 'a-zA-Z0-9' </dev/urandom | head -c $length)"
+}
+
+# Obter IP público do servidor
+get_server_ip() {
+    local ip
+    # Tentar obter IPv4
+    ip=$(curl -4 -s --max-time 5 https://api.ipify.org 2>/dev/null || \
+         curl -4 -s --max-time 5 https://icanhazip.com 2>/dev/null || \
+         curl -4 -s --max-time 5 https://ifconfig.me 2>/dev/null)
+    
+    # Se não conseguir IPv4, tentar IPv6
+    if [[ -z "$ip" ]]; then
+        ip=$(curl -6 -s --max-time 5 https://api6.ipify.org 2>/dev/null || \
+             curl -6 -s --max-time 5 https://icanhazip.com 2>/dev/null)
+    fi
+    
+    echo "$ip"
+}
+
+# Verificar se domínio aponta para o IP do servidor
+verify_domain_ip() {
+    local domain="$1"
+    local expected_ip="$2"
+    
+    # Remover http:// ou https:// se existir
+    domain="${domain#http://}"
+    domain="${domain#https://}"
+    domain="${domain%%/*}"
+    
+    # Tentar resolver com dig primeiro
+    if command -v dig >/dev/null 2>&1; then
+        local resolved_ip=$(dig +short "$domain" A | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -n1)
+        
+        # Se não encontrou IPv4, tentar IPv6
+        if [[ -z "$resolved_ip" ]]; then
+            resolved_ip=$(dig +short "$domain" AAAA | head -n1)
+        fi
+    # Se dig não estiver disponível, usar nslookup
+    elif command -v nslookup >/dev/null 2>&1; then
+        local resolved_ip=$(nslookup "$domain" 2>/dev/null | grep -A1 "Name:" | grep "Address:" | awk '{print $2}' | head -n1)
+    # Se nslookup não estiver disponível, usar host
+    elif command -v host >/dev/null 2>&1; then
+        local resolved_ip=$(host "$domain" 2>/dev/null | grep "has address" | awk '{print $4}' | head -n1)
+        
+        # Se não encontrou IPv4, tentar IPv6
+        if [[ -z "$resolved_ip" ]]; then
+            resolved_ip=$(host "$domain" 2>/dev/null | grep "has IPv6 address" | awk '{print $5}' | head -n1)
+        fi
+    else
+        echo "ERRO: Nenhuma ferramenta de DNS disponível (dig, nslookup, host)"
+        return 2
+    fi
+    
+    # Verificar se conseguiu resolver
+    if [[ -z "$resolved_ip" ]]; then
+        return 1
+    fi
+    
+    # Comparar IPs
+    if [[ "$resolved_ip" == "$expected_ip" ]]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Solicitar domínio com verificação automática
+ask_domain() {
+    local server_ip=$(get_server_ip)
+    local domain
+    local attempts=0
+    local max_attempts=3
+    
+    if [[ -z "$server_ip" ]]; then
+        _yellow "⚠ Não foi possível obter o IP do servidor automaticamente"
+        read -p "Digite o IP do servidor manualmente: " server_ip
+    else
+        _green "✓ IP do servidor detectado: $server_ip"
+    fi
+    
+    echo ""
+    
+    while [[ $attempts -lt $max_attempts ]]; do
+        read -p "Digite o domínio (ex: www.exemplo.com): " domain
+        
+        # Verificar se domínio não está vazio
+        if [[ -z "$domain" ]]; then
+            _red "✗ Domínio não pode estar vazio"
+            ((attempts++))
+            continue
+        fi
+        
+        # Verificar se domínio aponta para IP do servidor
+        _yellow "⏳ Verificando DNS do domínio..."
+        
+        if verify_domain_ip "$domain" "$server_ip"; then
+            _green "✓ Domínio aponta corretamente para $server_ip"
+            echo "$domain"
+            return 0
+        else
+            _red "✗ Domínio NÃO aponta para $server_ip"
+            _yellow "  Configure o DNS antes de continuar ou use outro domínio"
+            ((attempts++))
+            
+            if [[ $attempts -lt $max_attempts ]]; then
+                echo ""
+                read -p "Tentar outro domínio? (s/N): " retry
+                if [[ "$retry" != "s" && "$retry" != "S" ]]; then
+                    echo "$domain"
+                    return 1
+                fi
+            fi
+        fi
+    done
+    
+    _red "✗ Número máximo de tentativas atingido"
+    read -p "Deseja continuar mesmo assim? (s/N): " force
+    if [[ "$force" == "s" || "$force" == "S" ]]; then
+        echo "$domain"
+        return 1
+    else
+        return 2
+    fi
+}
+
+# ============================================================================
+# COMO USAR NAS FUNÇÕES DE CRIAÇÃO DE CONFIGURAÇÃO
+# ============================================================================
+
+# Exemplo de uso na função que cria VLESS-WS-TLS:
+#
+# # Gerar UUID automaticamente
+# uuid=$(generate_uuid)
+# echo "UUID gerado: $uuid"
+#
+# # Gerar caminho automaticamente
+# path=$(generate_path)
+# echo "Caminho gerado: $path"
+#
+# # Solicitar domínio com verificação
+# domain=$(ask_domain)
+# if [[ $? -ne 0 ]]; then
+#     _yellow "⚠ Continuando sem verificação de DNS"
+# fi
+#
+# # Solicitar porta (com valor padrão)
+# read -p "Digite a porta [443]: " port
+# port=${port:-443}
+#
+# # Usar os valores gerados/solicitados
+# echo "Configuração:"
+# echo "  UUID: $uuid"
+# echo "  Caminho: $path"
+# echo "  Domínio: $domain"
+# echo "  Porta: $port"
+
 # ========== FUNÇÕES ADICIONAIS CORRIGIDAS ==========
 
 # Função _wget com fallback para curl
