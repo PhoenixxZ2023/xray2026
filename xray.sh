@@ -3,12 +3,11 @@
 # ============================================================================
 # Xray2026 - Script Principal de Execução
 # Autor: PhoenixxZ2023
-# GitHub: https://github.com/PhoenixxZ2023/xray2026
 # Versão: 2.0 (v1.31)
 # ============================================================================
 
 # Versão do script
-main "$@"
+args=$@
 is_sh_ver=v1.31
 
 # Carregar módulo de inicialização
