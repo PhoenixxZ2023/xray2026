@@ -52,6 +52,6 @@ load_module "core.sh"
 
 # Executar função main do core.sh com os argumentos passados
 # A função main() está definida dentro do core.sh
-main "$args"
+main "$@"
 
 # ========== FIM DO INIT.SH ==========
