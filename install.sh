@@ -290,7 +290,7 @@ exit_and_del_tmpdir() {
     exit
 }
 
-# Criar serviço systemd manualmente (sem carregar systemd.sh)
+# Criar serviço systemd manualmente
 create_systemd_service() {
     local service_file="/lib/systemd/system/${is_core}.service"
     
@@ -326,7 +326,6 @@ EOF
 create_initial_config() {
     msg ok "Criando configuração inicial..."
     
-    # Criar config.json básico
     cat > $is_config_json <<'EOF'
 {
   "log": {
@@ -467,7 +466,7 @@ main() {
     # Adicionar alias
     echo "alias $is_core=$is_sh_bin" >>/root/.bashrc
 
-    # Comando core - CORRIGIDO: aponta para xray.sh
+    # Comando core
     ln -sf $is_sh_dir/$is_core.sh $is_sh_bin
 
     # jq
@@ -488,7 +487,7 @@ main() {
     # Mostrar mensagem de dica
     msg ok "Gerando arquivo de configuração..."
 
-    # Criar serviço systemd (sem carregar systemd.sh)
+    # Criar serviço systemd
     create_systemd_service
 
     # Criar diretório conf
@@ -515,6 +514,40 @@ main() {
     echo
     msg warn "PRÓXIMO PASSO: Execute ${green}xray add${none} para criar sua primeira configuração"
     echo
+    
+    # ========== CORREÇÕES AUTOMÁTICAS ==========
+    echo
+    msg ok "Aplicando correções automáticas..."
+    echo
+    
+    # Correção 1: Garantir is_sh_dir correto no core.sh
+    if grep -q '^is_sh_dir="/etc/xray"$' $is_sh_dir/src/core.sh 2>/dev/null; then
+        sed -i 's|^is_sh_dir="/etc/xray"$|is_sh_dir="/etc/xray/sh"|' $is_sh_dir/src/core.sh
+        msg ok "✓ Variável is_sh_dir corrigida"
+    fi
+    
+    # Correção 2: Remover main "$@" duplicado no core.sh
+    if grep -q '^main "\$@"$' $is_sh_dir/src/core.sh 2>/dev/null; then
+        sed -i '/^main "\$@"$/d' $is_sh_dir/src/core.sh
+        msg ok "✓ Linha main duplicada removida do core.sh"
+    fi
+    
+    # Correção 3: Remover main "$@" duplicado no xray.sh
+    if grep -q '^main "\$@"$' $is_sh_dir/xray.sh 2>/dev/null; then
+        sed -i '/^main "\$@"$/d' $is_sh_dir/xray.sh
+        msg ok "✓ Linha main duplicada removida do xray.sh"
+    fi
+    
+    # Correção 4: Corrigir chamada main no init.sh
+    if grep -q '^main "\$args"$' $is_sh_dir/src/init.sh 2>/dev/null; then
+        sed -i 's/^main "\$args"$/main "$@"/' $is_sh_dir/src/init.sh
+        msg ok "✓ Chamada main corrigida no init.sh"
+    fi
+    
+    echo
+    msg ok "✓ Correções aplicadas com sucesso!"
+    echo
+    # ========== FIM DAS CORREÇÕES ==========
     
     # Remover diretório tmp e sair
     exit_and_del_tmpdir ok
