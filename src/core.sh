@@ -73,7 +73,7 @@ protocol_list=(
     VLESS-gRPC-TLS
     VLESS-XHTTP-TLS
     VLESS-REALITY
-    VLESS-XTLS 
+    VLESS-XTLS  
     Trojan-WS-TLS
     Trojan-gRPC-TLS
     Shadowsocks
@@ -456,6 +456,32 @@ ask_domain() {
     else
         return 2
     fi
+}
+# ========== SALVAR CONFIGURAÇÃO ATIVA ==========
+save_active_config() {
+    local config_name="$1"
+    local protocol="$2"
+    local security="$3"
+    local flow="$4"
+    local port="$5"
+    local domain="$6"
+    local path="$7"
+    
+    cat > /etc/xray/active_config.conf <<ACTIVE_CONFIG
+# Configuração Ativa do Xray2026
+# Gerado automaticamente em: $(date '+%d/%m/%Y %H:%M:%S')
+
+config_name=$config_name
+protocol=$protocol
+security=$security
+flow=$flow
+port=$port
+domain=$domain
+path=$path
+ACTIVE_CONFIG
+    
+    _green "✓ Configuração '$config_name' definida como ativa"
+    _green "  Novos usuários herdarão esta configuração"
 }
 
 # ============================================================================
@@ -2556,17 +2582,18 @@ create_vless_xtls() {
     local config_name="$1"
     
     echo ""
-    echo "═══════════════════════════════════════"
-    echo "  CRIAR VLESS-XTLS"
-    echo "═══════════════════════════════════════"
+    echo "═══════════════════════════════════════════════════════════"
+    echo "  CRIAR CONFIGURAÇÃO VLESS-XTLS"
+    echo "═══════════════════════════════════════════════════════════"
     echo ""
     
-    # Gerar UUID e caminho automaticamente
-    local uuid=$(generate_uuid)
-    local path=$(generate_path)
-    
+    # Gerar UUID automaticamente
+    local uuid=$(uuidgen)
     _green "✓ UUID gerado: $uuid"
-    _green "✓ Caminho gerado: $path"
+    
+    # Gerar caminho automaticamente (8 caracteres aleatórios)
+    local path=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 8 | head -n 1)
+    _green "✓ Caminho gerado: /$path"
     
     echo ""
     
@@ -2574,20 +2601,48 @@ create_vless_xtls() {
     read -p "Digite a porta [443]: " port
     port=${port:-443}
     
-    # Solicitar domínio com verificação
-    local domain=$(ask_domain)
+    # Solicitar domínio
+    while true; do
+        read -p "Digite o domínio (ex: example.com): " domain
+        
+        if [[ -z "$domain" ]]; then
+            _red "✗ Domínio não pode ser vazio"
+            continue
+        fi
+        
+        # Verificar DNS (se dnsutils estiver instalado)
+        if command -v dig >/dev/null 2>&1; then
+            _yellow "⏳ Verificando DNS do domínio..."
+            domain_ip=$(dig +short "$domain" | head -n1)
+            
+            if [[ -n "$domain_ip" ]]; then
+                _green "✓ DNS verificado: $domain → $domain_ip"
+                break
+            else
+                _yellow "⚠ Domínio não resolve para nenhum IP"
+                read -p "Deseja continuar mesmo assim? (s/N): " continue_anyway
+                if [[ "$continue_anyway" == "s" || "$continue_anyway" == "S" ]]; then
+                    break
+                fi
+            fi
+        else
+            break
+        fi
+    done
     
     echo ""
-    _green "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    _green "  RESUMO DA CONFIGURAÇÃO"
-    _green "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo ""
+    echo "─────────────────────────────────────────────────────────"
+    echo "  RESUMO DA CONFIGURAÇÃO"
+    echo "─────────────────────────────────────────────────────────"
     echo "  Nome:      $config_name"
     echo "  Protocolo: VLESS-XTLS"
     echo "  UUID:      $uuid"
     echo "  Porta:     $port"
     echo "  Domínio:   $domain"
-    echo "  Caminho:   $path"
+    echo "  Caminho:   /$path"
+    echo "  Segurança: XTLS"
+    echo "  Flow:      xtls-rprx-vision"
+    echo "─────────────────────────────────────────────────────────"
     echo ""
     
     read -p "Confirmar criação? (S/n): " confirm
@@ -2597,10 +2652,10 @@ create_vless_xtls() {
     fi
     
     echo ""
-    _yellow "⏳ Criando configuração..."
+    _yellow "⏳ Criando configuração VLESS-XTLS..."
     
-    # Criar arquivo JSON
-    cat > "$is_conf_dir/$config_name.json" <<EOF
+    # Criar arquivo de configuração JSON
+    cat > "$is_conf_dir/$config_name.json" <<JSON_EOF
 {
   "protocol": "vless",
   "port": $port,
@@ -2628,7 +2683,7 @@ create_vless_xtls() {
       ]
     },
     "wsSettings": {
-      "path": "$path",
+      "path": "/$path",
       "headers": {
         "Host": "$domain"
       }
@@ -2639,50 +2694,69 @@ create_vless_xtls() {
     "destOverride": ["http", "tls"]
   }
 }
-EOF
+JSON_EOF
     
-    # Salvar informações
-    cat > "$is_conf_dir/$config_name.info" <<EOF
+    # Salvar informações da configuração
+    cat > "$is_conf_dir/$config_name.info" <<INFO_EOF
 name=$config_name
 protocol=vless
 uuid=$uuid
 address=$domain
 port=$port
 network=ws
-path=$path
+path=/$path
 security=xtls
 flow=xtls-rprx-vision
 sni=$domain
-EOF
+INFO_EOF
     
-    # Reiniciar Xray
+    # Salvar como configuração ativa
+    save_active_config "$config_name" "vless" "xtls" "xtls-rprx-vision" "$port" "$domain" "/$path"
+    
+    # Reiniciar serviço Xray
+    _yellow "⏳ Reiniciando serviço Xray..."
     systemctl restart xray 2>/dev/null
     
+    if systemctl is-active --quiet xray; then
+        _green "✓ Serviço Xray reiniciado com sucesso"
+    else
+        _red "✗ Erro ao reiniciar Xray - verifique os logs"
+        _yellow "  Execute: journalctl -u xray -n 50"
+    fi
+    
     echo ""
-    _green "✓ CONFIGURAÇÃO CRIADA COM SUCESSO!"
+    _green "✓✓✓ CONFIGURAÇÃO VLESS-XTLS CRIADA COM SUCESSO! ✓✓✓"
     echo ""
     
-    # Gerar link
-    local link="vless://${uuid}@${domain}:${port}?type=ws&security=xtls&flow=xtls-rprx-vision&path=${path}&sni=${domain}#${config_name}"
+    # Gerar link de compartilhamento
+    local link="vless://${uuid}@${domain}:${port}?type=ws&security=xtls&flow=xtls-rprx-vision&path=/${path}&sni=${domain}#${config_name}"
     
     echo "═══════════════════════════════════════════════════════════"
-    echo "  LINK DE COMPARTILHAMENTO"
+    echo "  LINK DE COMPARTILHAMENTO VLESS-XTLS"
     echo "═══════════════════════════════════════════════════════════"
     echo ""
     echo "$link"
     echo ""
     
-    # QR Code
+    # Gerar QR Code se disponível
     if command -v qrencode >/dev/null 2>&1; then
         echo "QR Code:"
         echo ""
         qrencode -t ANSIUTF8 "$link"
         echo ""
     else
-        _yellow "⚠ Instale qrencode para gerar QR Code: apt install qrencode"
+        _yellow "💡 Instale qrencode para gerar QR Code: apt install qrencode"
+        echo ""
     fi
     
     echo "═══════════════════════════════════════════════════════════"
+    echo ""
+    
+    _green "Agora você pode:"
+    echo "  • Criar usuários: xray add-user nome 30 vl"
+    echo "  • Ver configuração: xray info"
+    echo "  • Listar usuários: xray list-users"
+    echo ""
 }
 
 # Criar configuração VMess-WS-TLS
