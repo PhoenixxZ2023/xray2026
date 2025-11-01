@@ -147,4 +147,5 @@ fi
 # Carregar core.sh e executar main
 load core.sh
 [[ ! $args ]] && args=main
-main $args
+main "$@"
+
