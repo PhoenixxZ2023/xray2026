@@ -1,302 +1,237 @@
 #!/bin/bash
 
-author=PhoenixxZ2023
-# github=https://github.com/PhoenixxZ2023/xray2026
+# ============================================================================
+# install.sh - INSTALADOR COMPLETO XRAY2026 (CORRIGIDO)
+# Script de Instalação do Gerenciador Xray com Interface de Gerenciamento
+# ============================================================================
 
-# Cores bash
-red='\e[31m'
-yellow='\e[33m'
-gray='\e[90m'
-green='\e[92m'
-blue='\e[94m'
-magenta='\e[95m'
-cyan='\e[96m'
-none='\e[0m'
-_red() { echo -e ${red}$@${none}; }
-_blue() { echo -e ${blue}$@${none}; }
-_cyan() { echo -e ${cyan}$@${none}; }
-_green() { echo -e ${green}$@${none}; }
-_yellow() { echo -e ${yellow}$@${none}; }
-_magenta() { echo -e ${magenta}$@${none}; }
-_red_bg() { echo -e "\e[41m$@${none}"; }
+# Autor: PhoenixxZ2023
+# Versão: 2.0 - Com correções automáticas e compatível com Xray2026 Script 2.0
+# Repositório: https://github.com/PhoenixxZ2023/xray2026
 
-is_err=$(_red_bg ERRO!)
-is_warn=$(_red_bg AVISO!)
+# ════════════════════════════════════════════════════════════════════════
+# VARIÁVEIS GLOBAIS
+# ════════════════════════════════════════════════════════════════════════
 
-err() {
-    echo -e "\n$is_err $@\n" && exit 1
-}
+REPO="PhoenixxZ2023/xray2026"
+XRAY_REPO="XTLS/Xray-core"
 
-warn() {
-    echo -e "\n$is_warn $@\n"
-}
+# Diretórios
+INSTALL_DIR="/etc/xray"
+SH_DIR="/etc/xray/sh"
+CONF_DIR="/etc/xray/conf"
+LOG_DIR="/var/log/xray"
+USERS_DIR="/etc/xray/users"
 
-# Verificar root
-[[ $EUID != 0 ]] && err "Você não está executando como ${yellow}ROOT${none}."
+# Binários
+XRAY_BIN="/usr/local/bin/xray"
+SH_BIN="/usr/local/bin/xray"
 
-# yum ou apt-get, ubuntu/debian/centos
-cmd=$(type -P apt-get || type -P yum)
-[[ ! $cmd ]] && err "Este script suporta apenas ${yellow}(Ubuntu, Debian ou CentOS)${none}."
+# Cores
+RED='\e[31m'
+GREEN='\e[92m'
+YELLOW='\e[33m'
+BLUE='\e[94m'
+CYAN='\e[36m'
+NONE='\e[0m'
 
-# systemd
-[[ ! $(type -P systemctl) ]] && {
-    err "Este sistema não possui ${yellow}(systemctl)${none}, tente executar: ${yellow}${cmd} update -y; ${cmd} install systemd -y${none} para corrigir."
-}
+# Funções de cores
+_red() { echo -e "${RED}$@${NONE}"; }
+_green() { echo -e "${GREEN}$@${NONE}"; }
+_yellow() { echo -e "${YELLOW}$@${NONE}"; }
+_blue() { echo -e "${BLUE}$@${NONE}"; }
+_cyan() { echo -e "${CYAN}$@${NONE}"; }
 
-# wget instalado ou não
-is_wget=$(type -P wget)
-
-# x64
-case $(uname -m) in
-amd64 | x86_64)
-    is_jq_arch=amd64
-    is_core_arch="64"
-    ;;
-*aarch64* | *armv8*)
-    is_jq_arch=arm64
-    is_core_arch="arm64-v8a"
-    ;;
-*)
-    err "Este script suporta apenas sistemas 64 bits..."
-    ;;
-esac
-
-is_core=xray
-is_core_name=Xray
-is_core_dir=/etc/$is_core
-is_core_bin=$is_core_dir/bin/$is_core
-is_core_repo=xtls/$is_core-core
-is_conf_dir=$is_core_dir/conf
-is_log_dir=/var/log/$is_core
-is_sh_bin=/usr/local/bin/$is_core
-is_sh_dir=$is_core_dir/sh
-is_sh_repo=$author/xray2026
-is_pkg="wget unzip jq qrencode dnsutils"
-is_config_json=$is_core_dir/config.json
-tmp_var_lists=(
-    tmpcore
-    tmpsh
-    tmpjq
-    is_core_ok
-    is_sh_ok
-    is_jq_ok
-    is_pkg_ok
-)
-
-# Diretório temporário
-tmpdir=$(mktemp -u)
-[[ ! $tmpdir ]] && {
-    tmpdir=/tmp/tmp-$RANDOM
-}
-
-# Configurar variáveis
-for i in ${tmp_var_lists[*]}; do
-    export $i=$tmpdir/$i
-done
-
-# wget adicionar --no-check-certificate
-_wget() {
-    [[ $proxy ]] && export https_proxy=$proxy
-    wget --no-check-certificate $*
-}
-
-# Imprimir mensagem
 msg() {
-    case $1 in
-    warn)
-        local color=$yellow
-        ;;
-    err)
-        local color=$red
-        ;;
-    ok)
-        local color=$green
-        ;;
+    case "$1" in
+        ok) _green "$2" ;;
+        error) _red "$2" ;;
+        warn) _yellow "$2" ;;
+        info) _blue "$2" ;;
+        *) echo "$1" ;;
     esac
-
-    echo -e "${color}$(date +'%T')${none}) ${2}"
 }
 
-# Mostrar mensagem de ajuda
-show_help() {
-    echo -e "Uso: $0 [-f xxx | -l | -p xxx | -v xxx | -h]"
-    echo -e "  -f, --core-file <caminho>       Caminho personalizado do arquivo $is_core_name, ex: -f /root/${is_core}-linux-64.zip"
-    echo -e "  -l, --local-install             Instalação local do script, usando diretório atual"
-    echo -e "  -p, --proxy <endereço>          Usar proxy para download, ex: -p http://127.0.0.1:2333"
-    echo -e "  -v, --core-version <versão>     Versão personalizada do $is_core_name, ex: -v v1.8.1"
-    echo -e "  -h, --help                      Mostrar esta mensagem de ajuda\n"
+# ════════════════════════════════════════════════════════════════════════
+# VERIFICAÇÕES INICIAIS
+# ════════════════════════════════════════════════════════════════════════
 
-    exit 0
+check_root() {
+    if [[ $EUID -ne 0 ]]; then
+        msg error "Este script deve ser executado como root (use sudo)"
+        exit 1
+    fi
 }
 
-# Instalar pacotes dependentes
-install_pkg() {
-    cmd_not_found=
-    for i in $*; do
-        [[ ! $(type -P $i) ]] && cmd_not_found="$cmd_not_found,$i"
-    done
-    if [[ $cmd_not_found ]]; then
-        pkg=$(echo $cmd_not_found | sed 's/,/ /g')
-        msg warn "Instalando pacotes dependentes > ${pkg}"
-        $cmd install -y $pkg &>/dev/null
-        if [[ $? != 0 ]]; then
-            [[ $cmd =~ yum ]] && yum install epel-release -y &>/dev/null
-            $cmd update -y &>/dev/null
-            $cmd install -y $pkg &>/dev/null
-            [[ $? == 0 ]] && >$is_pkg_ok
-        else
-            >$is_pkg_ok
-        fi
+check_os() {
+    if [[ -f /etc/os-release ]]; then
+        . /etc/os-release
+        OS=$ID
+        OS_VER=$VERSION_ID
     else
-        >$is_pkg_ok
+        msg error "Sistema operacional não suportado"
+        exit 1
     fi
 }
 
-# Baixar arquivo
-download() {
-    case $1 in
-    core)
-        link=https://github.com/${is_core_repo}/releases/latest/download/${is_core}-linux-${is_core_arch}.zip
-        [[ $is_core_ver ]] && link="https://github.com/${is_core_repo}/releases/download/${is_core_ver}/${is_core}-linux-${is_core_arch}.zip"
-        name=$is_core_name
-        tmpfile=$tmpcore
-        is_ok=$is_core_ok
-        ;;
-    sh)
-        link=https://github.com/${is_sh_repo}/releases/latest/download/code.zip
-        name="Script $is_core_name"
-        tmpfile=$tmpsh
-        is_ok=$is_sh_ok
-        ;;
-    jq)
-        link=https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-$is_jq_arch
-        name="jq"
-        tmpfile=$tmpjq
-        is_ok=$is_jq_ok
-        ;;
-    esac
-
-    msg warn "Baixando ${name} > ${link}"
-    if _wget -t 3 -q -c $link -O $tmpfile; then
-        mv -f $tmpfile $is_ok
-    fi
-}
-
-# Obter IP do servidor
-get_ip() {
-    export "$(_wget -4 -qO- https://one.one.one.one/cdn-cgi/trace | grep ip=)" &>/dev/null
-    [[ -z $ip ]] && export "$(_wget -6 -qO- https://one.one.one.one/cdn-cgi/trace | grep ip=)" &>/dev/null
-}
-
-# Verificar status das tarefas em segundo plano
-check_status() {
-    # Falha na instalação de pacotes dependentes
-    [[ ! -f $is_pkg_ok ]] && {
-        msg err "Falha ao instalar pacotes dependentes"
-        msg err "Tente instalar manualmente: $cmd update -y; $cmd install -y $is_pkg"
-        is_fail=1
-    }
-
-    # Status do download de arquivos
-    if [[ $is_wget ]]; then
-        [[ ! -f $is_core_ok ]] && {
-            msg err "Falha ao baixar ${is_core_name}"
-            is_fail=1
-        }
-        [[ ! -f $is_sh_ok ]] && {
-            msg err "Falha ao baixar script ${is_core_name}"
-            is_fail=1
-        }
-        [[ ! -f $is_jq_ok ]] && {
-            msg err "Falha ao baixar jq"
-            is_fail=1
-        }
-    else
-        [[ ! $is_fail ]] && {
-            is_wget=1
-            [[ ! $is_core_file ]] && download core &
-            [[ ! $local_install ]] && download sh &
-            [[ $jq_not_found ]] && download jq &
-            get_ip
-            wait
-            check_status
-        }
-    fi
-
-    # Encontrou falha, remover diretório temporário e sair
-    [[ $is_fail ]] && {
-        exit_and_del_tmpdir
-    }
-}
-
-# Verificação de parâmetros
-pass_args() {
-    while [[ $# -gt 0 ]]; do
-        case $1 in
-        -f | --core-file)
-            [[ -z $2 ]] && {
-                err "($1) parâmetro obrigatório ausente, uso correto: [$1 /root/$is_core-linux-64.zip]"
-            } || [[ ! -f $2 ]] && {
-                err "($2) não é um arquivo válido."
-            }
-            is_core_file=$2
-            shift 2
+check_arch() {
+    ARCH=$(uname -m)
+    case $ARCH in
+        x86_64|amd64)
+            ARCH="64"
             ;;
-        -l | --local-install)
-            [[ ! -f ${PWD}/src/core.sh || ! -f ${PWD}/$is_core.sh ]] && {
-                err "Diretório atual (${PWD}) não é um diretório de script completo."
-            }
-            local_install=1
-            shift 1
+        aarch64|arm64)
+            ARCH="arm64-v8a"
             ;;
-        -p | --proxy)
-            [[ -z $2 ]] && {
-                err "($1) parâmetro obrigatório ausente, uso correto: [$1 http://127.0.0.1:2333 ou -p socks5://127.0.0.1:2333]"
-            }
-            proxy=$2
-            shift 2
-            ;;
-        -v | --core-version)
-            [[ -z $2 ]] && {
-                err "($1) parâmetro obrigatório ausente, uso correto: [$1 v1.8.1]"
-            }
-            is_core_ver=v${2#v}
-            shift 2
-            ;;
-        -h | --help)
-            show_help
+        armv7l)
+            ARCH="arm32-v7a"
             ;;
         *)
-            echo -e "\n${is_err} ($@) parâmetro desconhecido...\n"
-            show_help
+            msg error "Arquitetura não suportada: $ARCH"
+            exit 1
             ;;
-        esac
+    esac
+}
+
+check_dependencies() {
+    msg info "Verificando dependências..."
+    
+    local deps=("curl" "wget" "jq" "systemctl" "unzip")
+    local missing=()
+    
+    for dep in "${deps[@]}"; do
+        if ! command -v "$dep" &>/dev/null; then
+            missing+=("$dep")
+        fi
     done
-    [[ $is_core_ver && $is_core_file ]] && {
-        err "Não é possível personalizar versão e arquivo do ${is_core_name} ao mesmo tempo."
-    }
+    
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        msg warn "Instalando dependências: ${missing[*]}"
+        
+        if command -v apt-get &>/dev/null; then
+            apt-get update -qq
+            apt-get install -y "${missing[@]}"
+        elif command -v yum &>/dev/null; then
+            yum install -y "${missing[@]}"
+        elif command -v dnf &>/dev/null; then
+            dnf install -y "${missing[@]}"
+        else
+            msg error "Gerenciador de pacotes não suportado"
+            exit 1
+        fi
+    fi
+    
+    msg ok "Dependências verificadas"
 }
 
-# Sair e remover tmpdir
-exit_and_del_tmpdir() {
-    rm -rf $tmpdir
-    [[ ! $1 ]] && {
-        msg err "Oops..."
-        msg err "Erro durante a instalação..."
-        echo -e "Reportar problema: https://github.com/${is_sh_repo}/issues"
-        echo
+# ════════════════════════════════════════════════════════════════════════
+# FUNÇÕES DE DOWNLOAD
+# ════════════════════════════════════════════════════════════════════════
+
+get_latest_version() {
+    local repo="$1"
+    local version=$(curl -sL "https://api.github.com/repos/$repo/releases/latest" | jq -r '.tag_name')
+    
+    if [[ -z "$version" || "$version" == "null" ]]; then
+        msg error "Falha ao obter versão mais recente de $repo"
         exit 1
-    }
-    exit
+    fi
+    
+    echo "$version"
 }
 
-# Criar serviço systemd manualmente
+download_xray() {
+    msg info "Baixando Xray-core..."
+    
+    local version=$(get_latest_version "$XRAY_REPO")
+    local download_url="https://github.com/$XRAY_REPO/releases/download/${version}/Xray-linux-${ARCH}.zip"
+    
+    msg info "Versão: $version"
+    msg info "URL: $download_url"
+    
+    local tmp_dir=$(mktemp -d)
+    cd "$tmp_dir"
+    
+    if ! wget -q --show-progress "$download_url"; then
+        msg error "Falha ao baixar Xray-core"
+        rm -rf "$tmp_dir"
+        exit 1
+    fi
+    
+    if ! unzip -q "Xray-linux-${ARCH}.zip"; then
+        msg error "Falha ao extrair Xray-core"
+        rm -rf "$tmp_dir"
+        exit 1
+    fi
+    
+    # Instalar binário
+    install -m 755 xray "$XRAY_BIN"
+    
+    cd - > /dev/null
+    rm -rf "$tmp_dir"
+    
+    msg ok "Xray-core instalado: $version"
+}
+
+download_scripts() {
+    msg info "Baixando scripts de gerenciamento..."
+    
+    local tmp_dir=$(mktemp -d)
+    cd "$tmp_dir"
+    
+    if ! wget -q "https://github.com/$REPO/archive/refs/heads/main.zip"; then
+        msg error "Falha ao baixar scripts"
+        rm -rf "$tmp_dir"
+        exit 1
+    fi
+    
+    if ! unzip -q main.zip; then
+        msg error "Falha ao extrair scripts"
+        rm -rf "$tmp_dir"
+        exit 1
+    fi
+    
+    # Criar diretórios
+    mkdir -p "$SH_DIR/src"
+    mkdir -p "$CONF_DIR"
+    mkdir -p "$LOG_DIR"
+    mkdir -p "$USERS_DIR"
+    
+    # Copiar arquivos
+    cp -r xray2026-main/src/* "$SH_DIR/src/"
+    cp xray2026-main/xray.sh "$SH_DIR/"
+    
+    # Criar link simbólico
+    ln -sf "$SH_DIR/xray.sh" "$SH_BIN"
+    chmod +x "$SH_DIR/xray.sh"
+    chmod +x "$SH_DIR/src/"*.sh
+    
+    cd - > /dev/null
+    rm -rf "$tmp_dir"
+    
+    msg ok "Scripts instalados"
+}
+
+download_geodata() {
+    msg info "Baixando geodata (geoip e geosite)..."
+    
+    local geoip_url="https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat"
+    local geosite_url="https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat"
+    
+    wget -q --show-progress -O "$INSTALL_DIR/geoip.dat" "$geoip_url"
+    wget -q --show-progress -O "$INSTALL_DIR/geosite.dat" "$geosite_url"
+    
+    msg ok "Geodata instalado"
+}
+
+# ════════════════════════════════════════════════════════════════════════
+# CONFIGURAÇÃO DO SISTEMA
+# ════════════════════════════════════════════════════════════════════════
+
 create_systemd_service() {
-    local service_file="/lib/systemd/system/${is_core}.service"
+    msg info "Criando serviço systemd..."
     
-    msg ok "Criando serviço systemd..."
-    
-    cat > $service_file <<EOF
+    cat > /etc/systemd/system/xray.service <<EOF
 [Unit]
 Description=Xray Service
 Documentation=https://github.com/xtls
@@ -308,250 +243,246 @@ User=root
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 NoNewPrivileges=true
-ExecStart=$is_core_bin run -config $is_config_json -confdir $is_conf_dir
+ExecStart=$XRAY_BIN run -config $INSTALL_DIR/config.json -confdir $CONF_DIR
 Restart=on-failure
 RestartPreventExitStatus=23
-LimitNPROC=10000
+StandardOutput=journal
+StandardError=journal
 LimitNOFILE=1000000
 
 [Install]
 WantedBy=multi-user.target
 EOF
-
+    
     systemctl daemon-reload
-    systemctl enable $is_core &>/dev/null
+    systemctl enable xray
+    
+    msg ok "Serviço systemd criado"
 }
 
-# Criar configuração inicial básica
 create_initial_config() {
-    msg ok "Criando configuração inicial..."
+    msg info "Criando configuração inicial..."
     
-    cat > $is_config_json <<'EOF'
+    cat > "$INSTALL_DIR/config.json" <<EOF
 {
   "log": {
     "loglevel": "warning",
-    "access": "/var/log/xray/access.log",
-    "error": "/var/log/xray/error.log"
+    "access": "$LOG_DIR/access.log",
+    "error": "$LOG_DIR/error.log"
   },
   "inbounds": [],
   "outbounds": [
     {
       "protocol": "freedom",
+      "settings": {},
       "tag": "direct"
     },
     {
       "protocol": "blackhole",
-      "tag": "block"
+      "settings": {},
+      "tag": "blocked"
     }
   ],
   "routing": {
-    "domainStrategy": "AsIs",
     "rules": []
   }
 }
 EOF
+    
+    msg ok "Configuração inicial criada"
 }
 
-# Principal
-main() {
+# ════════════════════════════════════════════════════════════════════════
+# INSTALAÇÕES ADICIONAIS
+# ════════════════════════════════════════════════════════════════════════
 
-    # Verificar versão antiga
-    [[ -f $is_sh_bin && -d $is_core_dir/bin && -d $is_sh_dir && -d $is_conf_dir ]] && {
-        err "Script já instalado detectado. Para reinstalar use o comando: ${green}${is_core} reinstall${none}"
-    }
-
-    # Verificar parâmetros
-    [[ $# -gt 0 ]] && pass_args $@
-
-    # Mostrar mensagem de boas-vindas
-    clear
-    echo
-    echo "........... $is_core_name 2026 - Script Avançado by $author .........."
-    echo "........... Instalação do Xray-core Oficial (XTLS) .........."
-    echo
-    msg ok "Repositório: https://github.com/${is_sh_repo}"
-    echo
-
-    # Iniciar instalação...
-    msg warn "Iniciando instalação..."
-    [[ $is_core_ver ]] && msg warn "Versão do ${is_core_name}: ${yellow}$is_core_ver${none}"
-    [[ $proxy ]] && msg warn "Usando proxy: ${yellow}$proxy${none}"
-    
-    # Criar tmpdir
-    mkdir -p $tmpdir
-    
-    # Se is_core_file, copiar arquivo
-    [[ $is_core_file ]] && {
-        cp -f $is_core_file $is_core_ok
-        msg warn "${yellow}Usando arquivo ${is_core_name} > $is_core_file${none}"
-    }
-    
-    # Instalação local do diretório sh script
-    [[ $local_install ]] && {
-        >$is_sh_ok
-        msg warn "${yellow}Instalação local do script > $PWD${none}"
-    }
-
-    timedatectl set-ntp true &>/dev/null
-    [[ $? != 0 ]] && {
-        msg warn "${yellow}\e[4mAVISO!!! Não foi possível configurar sincronização automática de horário. Isso pode afetar o uso do protocolo VMess.${none}"
-    }
-
-    # Instalar pacotes dependentes
-    install_pkg $is_pkg &
-
-    # jq
-    if [[ $(type -P jq) ]]; then
-        >$is_jq_ok
-    else
-        jq_not_found=1
+install_qrencode() {
+    if ! command -v qrencode &>/dev/null; then
+        msg info "Instalando qrencode para geração de QR Codes..."
+        
+        if command -v apt-get &>/dev/null; then
+            apt-get install -y qrencode &>/dev/null
+        elif command -v yum &>/dev/null; then
+            yum install -y qrencode &>/dev/null
+        elif command -v dnf &>/dev/null; then
+            dnf install -y qrencode &>/dev/null
+        fi
+        
+        msg ok "qrencode instalado"
     fi
-    
-    # Se wget instalado, baixar core, sh, jq, obter ip
-    [[ $is_wget ]] && {
-        [[ ! $is_core_file ]] && download core &
-        [[ ! $local_install ]] && download sh &
-        [[ $jq_not_found ]] && download jq &
-        get_ip
-    }
+}
 
-    # Aguardar conclusão das tarefas em segundo plano
-    wait
-
-    # Verificar status das tarefas em segundo plano
-    check_status
-
-    # Testar $is_core_file
-    if [[ $is_core_file ]]; then
-        unzip -qo $is_core_ok -d $tmpdir/testzip &>/dev/null
-        [[ $? != 0 ]] && {
-            msg err "Arquivo ${is_core_name} não passou no teste."
-            exit_and_del_tmpdir
-        }
-        for i in ${is_core} geoip.dat geosite.dat; do
-            [[ ! -f $tmpdir/testzip/$i ]] && is_file_err=1 && break
-        done
-        [[ $is_file_err ]] && {
-            msg err "Arquivo ${is_core_name} não passou no teste."
-            exit_and_del_tmpdir
-        }
+install_dnsutils() {
+    if ! command -v dig &>/dev/null; then
+        msg info "Instalando dnsutils para verificação DNS..."
+        
+        if command -v apt-get &>/dev/null; then
+            apt-get install -y dnsutils &>/dev/null
+        elif command -v yum &>/dev/null; then
+            yum install -y bind-utils &>/dev/null
+        elif command -v dnf &>/dev/null; then
+            dnf install -y bind-utils &>/dev/null
+        fi
+        
+        msg ok "dnsutils instalado"
     fi
+}
 
-    # Obter IP do servidor
-    [[ ! $ip ]] && {
-        msg err "Falha ao obter IP do servidor."
-        exit_and_del_tmpdir
-    }
-
-    # Criar diretório sh...
-    mkdir -p $is_sh_dir
-
-    # Copiar arquivo sh ou extrair zip sh
-    if [[ $local_install ]]; then
-        cp -rf $PWD/* $is_sh_dir
-    else
-        unzip -qo $is_sh_ok -d $is_sh_dir
+install_uuid() {
+    if ! command -v uuidgen &>/dev/null; then
+        msg info "Instalando uuid-runtime..."
+        
+        if command -v apt-get &>/dev/null; then
+            apt-get install -y uuid-runtime &>/dev/null
+        fi
+        
+        msg ok "uuid-runtime instalado"
     fi
+}
 
-    # Criar diretório bin do core
-    mkdir -p $is_core_dir/bin
-    
-    # Copiar arquivo core ou extrair zip core
-    if [[ $is_core_file ]]; then
-        cp -rf $tmpdir/testzip/* $is_core_dir/bin
-    else
-        unzip -qo $is_core_ok -d $is_core_dir/bin
-    fi
+# ════════════════════════════════════════════════════════════════════════
+# CORREÇÕES AUTOMÁTICAS
+# ════════════════════════════════════════════════════════════════════════
 
-    # Adicionar alias
-    echo "alias $is_core=$is_sh_bin" >>/root/.bashrc
-
-    # Comando core
-    ln -sf $is_sh_dir/$is_core.sh $is_sh_bin
-
-    # jq
-    [[ $jq_not_found ]] && mv -f $is_jq_ok /usr/bin/jq
-
-    # chmod
-    chmod +x $is_core_bin $is_sh_bin /usr/bin/jq
-
-    # Criar diretório de log
-    mkdir -p $is_log_dir
-
-    # Criar diretório de dados de usuários
-    mkdir -p $is_core_dir/users
-    
-    # Criar arquivo de banco de dados de usuários
-    echo "[]" > $is_core_dir/users/users.json
-
-    # Mostrar mensagem de dica
-    msg ok "Gerando arquivo de configuração..."
-
-    # Criar serviço systemd
-    create_systemd_service
-
-    # Criar diretório conf
-    mkdir -p $is_conf_dir
-
-    # Criar configuração inicial básica
-    create_initial_config
-    
-    # Mostrar informações de instalação concluída
-    echo
-    echo "=========================================="
-    msg ok "Instalação concluída com sucesso!"
-    echo "=========================================="
-    echo
-    msg ok "Execute o comando: ${green}xray${none} para gerenciar"
-    msg ok "Execute o comando: ${green}xray help${none} para ajuda"
-    msg ok "Execute o comando: ${green}xray add${none} para adicionar configuração"
-    echo
-    msg ok "Gerenciamento de usuários disponível!"
-    msg ok "Monitoramento de tráfego habilitado!"
-    msg ok "Sistema pronto para configurar protocolos!"
-    echo
-    echo "=========================================="
-    echo
-    msg warn "PRÓXIMO PASSO: Execute ${green}xray add${none} para criar sua primeira configuração"
-    echo
-    
-    # ========== CORREÇÕES AUTOMÁTICAS ==========
+apply_automatic_fixes() {
     echo
     msg ok "Aplicando correções automáticas..."
     echo
     
     # Correção 1: Garantir is_sh_dir correto no core.sh
-    if grep -q '^is_sh_dir="/etc/xray"$' $is_sh_dir/src/core.sh 2>/dev/null; then
-        sed -i 's|^is_sh_dir="/etc/xray"$|is_sh_dir="/etc/xray/sh"|' $is_sh_dir/src/core.sh
+    if grep -q '^is_sh_dir="/etc/xray"$' "$SH_DIR/src/core.sh" 2>/dev/null; then
+        sed -i 's|^is_sh_dir="/etc/xray"$|is_sh_dir="/etc/xray/sh"|' "$SH_DIR/src/core.sh"
         msg ok "✓ Variável is_sh_dir corrigida"
     fi
     
     # Correção 2: Remover main "$@" duplicado no core.sh
-    if grep -q '^main "\$@"$' $is_sh_dir/src/core.sh 2>/dev/null; then
-        sed -i '/^main "\$@"$/d' $is_sh_dir/src/core.sh
+    if grep -q '^main "\$@"$' "$SH_DIR/src/core.sh" 2>/dev/null; then
+        sed -i '/^main "\$@"$/d' "$SH_DIR/src/core.sh"
         msg ok "✓ Linha main duplicada removida do core.sh"
     fi
     
     # Correção 3: Remover main "$@" duplicado no xray.sh
-    if grep -q '^main "\$@"$' $is_sh_dir/xray.sh 2>/dev/null; then
-        sed -i '/^main "\$@"$/d' $is_sh_dir/xray.sh
+    if grep -q '^main "\$@"$' "$SH_DIR/xray.sh" 2>/dev/null; then
+        sed -i '/^main "\$@"$/d' "$SH_DIR/xray.sh"
         msg ok "✓ Linha main duplicada removida do xray.sh"
     fi
     
     # Correção 4: Corrigir chamada main no init.sh
-    if grep -q '^main "\$args"$' $is_sh_dir/src/init.sh 2>/dev/null; then
-        sed -i 's/^main "\$args"$/main "$@"/' $is_sh_dir/src/init.sh
+    if grep -q '^main "\$args"$' "$SH_DIR/src/init.sh" 2>/dev/null; then
+        sed -i 's/^main "\$args"$/main "$@"/' "$SH_DIR/src/init.sh"
         msg ok "✓ Chamada main corrigida no init.sh"
+    fi
+    
+    # Correção 5: Criar diretório de usuários se não existir
+    if [[ ! -d "$USERS_DIR" ]]; then
+        mkdir -p "$USERS_DIR"
+        echo "[]" > "$USERS_DIR/users.json"
+        msg ok "✓ Diretório de usuários criado"
+    fi
+    
+    # Correção 6: Criar arquivo de configuração ativa vazio
+    if [[ ! -f "$INSTALL_DIR/active_config.conf" ]]; then
+        touch "$INSTALL_DIR/active_config.conf"
+        msg ok "✓ Arquivo de configuração ativa criado"
     fi
     
     echo
     msg ok "✓ Correções aplicadas com sucesso!"
     echo
-    # ========== FIM DAS CORREÇÕES ==========
-    
-    # Remover diretório tmp e sair
-    exit_and_del_tmpdir ok
 }
 
-# Iniciar
-main $@
+# ════════════════════════════════════════════════════════════════════════
+# FUNÇÃO PRINCIPAL DE INSTALAÇÃO
+# ════════════════════════════════════════════════════════════════════════
+
+main() {
+    clear
+    echo
+    echo "═══════════════════════════════════════════════════════════"
+    echo "  INSTALADOR XRAY2026"
+    echo "  Gerenciador Completo de Xray com Interface CLI"
+    echo "═══════════════════════════════════════════════════════════"
+    echo
+    
+    # Verificações
+    check_root
+    check_os
+    check_arch
+    check_dependencies
+    
+    echo
+    msg info "Sistema operacional: $OS $OS_VER"
+    msg info "Arquitetura: $ARCH"
+    echo
+    
+    read -p "Deseja continuar com a instalação? (s/N): " confirm
+    if [[ "$confirm" != "s" && "$confirm" != "S" ]]; then
+        msg warn "Instalação cancelada"
+        exit 0
+    fi
+    
+    echo
+    msg info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    msg info "INICIANDO INSTALAÇÃO"
+    msg info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo
+    
+    # Download e instalação
+    download_xray
+    download_scripts
+    download_geodata
+    
+    # Configuração
+    create_initial_config
+    create_systemd_service
+    
+    # Instalações adicionais
+    install_qrencode
+    install_dnsutils
+    install_uuid
+    
+    # Aplicar correções
+    apply_automatic_fixes
+    
+    # Iniciar serviço
+    msg info "Iniciando serviço Xray..."
+    systemctl start xray
+    
+    if systemctl is-active --quiet xray; then
+        msg ok "✓ Serviço Xray iniciado com sucesso"
+    else
+        msg warn "⚠ Serviço Xray não iniciou. Verifique os logs."
+    fi
+    
+    echo
+    msg ok "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    msg ok "✓✓✓ INSTALAÇÃO CONCLUÍDA COM SUCESSO! ✓✓✓"
+    msg ok "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo
+    
+    msg info "Para começar a usar, execute:"
+    echo
+    _cyan "  xray"
+    echo
+    msg info "Comandos úteis:"
+    _cyan "  xray add              # Adicionar configuração de protocolo"
+    _cyan "  xray add-user         # Adicionar usuário"
+    _cyan "  xray list-users       # Listar usuários"
+    _cyan "  xray help             # Ver todos os comandos"
+    echo
+    
+    msg info "Funcionalidades incluídas:"
+    echo "  ✓ Suporte a VLESS-XTLS"
+    echo "  ✓ Abreviações de protocolo (vl/vm)"
+    echo "  ✓ Geração automática de links"
+    echo "  ✓ Geração automática de QR Codes"
+    echo "  ✓ Sistema de configuração ativa"
+    echo "  ✓ Verificação automática de DNS"
+    echo
+    
+    msg info "Repositório: https://github.com/$REPO"
+    echo
+}
+
+# Executar instalação
+main "$@"
