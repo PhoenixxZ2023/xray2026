@@ -1,387 +1,288 @@
 #!/bin/bash
 
-# Xray2026 - Gerenciador de Serviços Systemd
-# Autor: PhoenixxZ2023
-# GitHub: https://github.com/PhoenixxZ2023/xray2026
-# Baseado no script original de 233boy
+# ============================================================================
+# systemd.sh - Gerenciamento do Serviço Systemd Xray (CORRIGIDO)
+# Remove argumento 'run' incompatível com Xray2026 Script 2.0
+# ============================================================================
 
-# Função para instalar/criar serviços systemd
-install_service() {
-    case $1 in
-    xray | v2ray)
-        # Definir site de documentação
-        is_doc_site=https://xtls.github.io/
-        [[ $1 == 'v2ray' ]] && is_doc_site=https://www.v2fly.org/
-        
-        # Criar arquivo de serviço do Xray/V2Ray
-        cat >/lib/systemd/system/$is_core.service <<EOF
+# Autor: PhoenixxZ2023
+# Versão: 2.0 - Corrigido para compatibilidade com Xray2026
+
+# Cores
+_red() { echo -e "\e[31m$@\e[0m"; }
+_green() { echo -e "\e[92m$@\e[0m"; }
+_yellow() { echo -e "\e[33m$@\e[0m"; }
+_blue() { echo -e "\e[94m$@\e[0m"; }
+
+# ════════════════════════════════════════════════════════════════════════
+# CRIAR SERVIÇO SYSTEMD
+# ════════════════════════════════════════════════════════════════════════
+
+create_service() {
+    _blue "Criando serviço systemd para Xray..."
+    
+    # Criar arquivo de serviço (SEM o argumento 'run')
+    cat > /etc/systemd/system/xray.service <<'EOF'
 [Unit]
-Description=$is_core_name Service
-Documentation=$is_doc_site
+Description=Xray Service
+Documentation=https://github.com/xtls
 After=network.target nss-lookup.target
 
 [Service]
-# Execução como root (necessário para portas < 1024)
+Type=simple
 User=root
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 NoNewPrivileges=true
-ExecStart=$is_core_bin run -config $is_config_json -confdir $is_conf_dir
+ExecStart=/usr/local/bin/xray -config /etc/xray/config.json -confdir /etc/xray/conf
 Restart=on-failure
 RestartPreventExitStatus=23
-
-# Limites de recursos
-LimitNPROC=10000
-LimitNOFILE=1048576
-
-# Segurança
-PrivateTmp=true
-ProtectSystem=full
-
-# Capabilities (descomente se necessário)
-#CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
-#AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+StandardOutput=journal
+StandardError=journal
+LimitNOFILE=1000000
 
 [Install]
 WantedBy=multi-user.target
 EOF
-        
-        msg "Serviço $is_core_name criado com sucesso!"
-        ;;
-        
-    caddy)
-        # Criar arquivo de serviço do Caddy
-        # Baseado em: https://github.com/caddyserver/dist/blob/master/init/caddy.service
-        cat >/lib/systemd/system/caddy.service <<EOF
-[Unit]
-Description=Caddy
-Documentation=https://caddyserver.com/docs/
-After=network.target network-online.target
-Requires=network-online.target
-
-[Service]
-Type=notify
-User=root
-Group=root
-ExecStart=$is_caddy_bin run --environ --config $is_caddyfile --adapter caddyfile
-ExecReload=$is_caddy_bin reload --config $is_caddyfile --adapter caddyfile
-TimeoutStopSec=5s
-
-# Limites de recursos
-LimitNPROC=10000
-LimitNOFILE=1048576
-
-# Segurança
-PrivateTmp=true
-ProtectSystem=full
-
-# Capabilities (descomente se necessário)
-#AmbientCapabilities=CAP_NET_BIND_SERVICE
-
-[Install]
-WantedBy=multi-user.target
-EOF
-        
-        msg "Serviço Caddy criado com sucesso!"
-        ;;
-        
-    *)
-        err "Serviço desconhecido: $1"
-        return 1
-        ;;
-    esac
-
-    # Habilitar e recarregar daemon
-    systemctl enable $1 &>/dev/null
-    systemctl daemon-reload &>/dev/null
     
-    msg "✓ Serviço $1 habilitado e registrado no systemd"
+    # Recarregar systemd
+    systemctl daemon-reload
+    
+    # Habilitar serviço
+    systemctl enable xray
+    
+    _green "✓ Serviço systemd criado e habilitado"
 }
 
-# Função para remover serviço
-remove_service() {
-    local service_name=$1
+# ════════════════════════════════════════════════════════════════════════
+# RECRIAR SERVIÇO (útil para correções)
+# ════════════════════════════════════════════════════════════════════════
+
+recreate_service() {
+    _yellow "Recriando serviço systemd..."
     
-    if [[ -f /lib/systemd/system/${service_name}.service ]]; then
-        # Parar serviço
-        systemctl stop $service_name &>/dev/null
-        
-        # Desabilitar serviço
-        systemctl disable $service_name &>/dev/null
-        
-        # Remover arquivo de serviço
-        rm -f /lib/systemd/system/${service_name}.service
-        
-        # Recarregar daemon
-        systemctl daemon-reload &>/dev/null
-        
-        msg "✓ Serviço $service_name removido com sucesso"
-    else
-        warn "Serviço $service_name não encontrado"
-    fi
+    # Parar serviço se estiver rodando
+    systemctl stop xray 2>/dev/null
+    
+    # Desabilitar
+    systemctl disable xray 2>/dev/null
+    
+    # Recriar
+    create_service
+    
+    _green "✓ Serviço recriado"
 }
 
-# Função para verificar status do serviço
-check_service_status() {
-    local service_name=$1
+# ════════════════════════════════════════════════════════════════════════
+# INICIAR SERVIÇO
+# ════════════════════════════════════════════════════════════════════════
+
+start_service() {
+    _blue "Iniciando serviço Xray..."
     
-    if systemctl is-active --quiet $service_name; then
-        _green "✓ $service_name está em execução"
+    systemctl start xray
+    
+    if systemctl is-active --quiet xray; then
+        _green "✓ Xray iniciado com sucesso"
         return 0
     else
-        _red "✗ $service_name está parado"
+        _red "✗ Falha ao iniciar Xray"
+        _yellow "Verifique os logs: journalctl -u xray -n 50"
         return 1
     fi
 }
 
-# Função para gerenciar serviços (start/stop/restart/status)
-manage_service() {
-    local action=$1
-    local service_name=$2
+# ════════════════════════════════════════════════════════════════════════
+# PARAR SERVIÇO
+# ════════════════════════════════════════════════════════════════════════
+
+stop_service() {
+    _blue "Parando serviço Xray..."
     
-    case $action in
-        start)
-            systemctl start $service_name
-            if [[ $? -eq 0 ]]; then
-                msg "✓ Serviço $service_name iniciado"
+    systemctl stop xray
+    
+    if ! systemctl is-active --quiet xray; then
+        _green "✓ Xray parado"
+        return 0
+    else
+        _red "✗ Falha ao parar Xray"
+        return 1
+    fi
+}
+
+# ════════════════════════════════════════════════════════════════════════
+# REINICIAR SERVIÇO
+# ════════════════════════════════════════════════════════════════════════
+
+restart_service() {
+    _blue "Reiniciando serviço Xray..."
+    
+    systemctl restart xray
+    
+    sleep 2
+    
+    if systemctl is-active --quiet xray; then
+        _green "✓ Xray reiniciado com sucesso"
+        return 0
+    else
+        _red "✗ Falha ao reiniciar Xray"
+        _yellow "Verifique os logs: journalctl -u xray -n 50"
+        return 1
+    fi
+}
+
+# ════════════════════════════════════════════════════════════════════════
+# VER STATUS
+# ════════════════════════════════════════════════════════════════════════
+
+status_service() {
+    systemctl status xray --no-pager -l
+}
+
+# ════════════════════════════════════════════════════════════════════════
+# HABILITAR/DESABILITAR AUTOSTART
+# ════════════════════════════════════════════════════════════════════════
+
+enable_service() {
+    systemctl enable xray
+    _green "✓ Autostart habilitado"
+}
+
+disable_service() {
+    systemctl disable xray
+    _yellow "⚠ Autostart desabilitado"
+}
+
+# ════════════════════════════════════════════════════════════════════════
+# REMOVER SERVIÇO
+# ════════════════════════════════════════════════════════════════════════
+
+remove_service() {
+    _yellow "Removendo serviço systemd..."
+    
+    # Parar e desabilitar
+    systemctl stop xray 2>/dev/null
+    systemctl disable xray 2>/dev/null
+    
+    # Remover arquivo
+    rm -f /etc/systemd/system/xray.service
+    
+    # Recarregar
+    systemctl daemon-reload
+    systemctl reset-failed
+    
+    _green "✓ Serviço removido"
+}
+
+# ════════════════════════════════════════════════════════════════════════
+# VERIFICAR SE SERVIÇO EXISTE
+# ════════════════════════════════════════════════════════════════════════
+
+service_exists() {
+    systemctl list-unit-files | grep -q "xray.service"
+}
+
+# ════════════════════════════════════════════════════════════════════════
+# MENU DE GERENCIAMENTO
+# ════════════════════════════════════════════════════════════════════════
+
+show_service_menu() {
+    while true; do
+        clear
+        echo ""
+        echo "═══════════════════════════════════════"
+        echo "  GERENCIAMENTO DO SERVIÇO XRAY"
+        echo "═══════════════════════════════════════"
+        echo ""
+        
+        if service_exists; then
+            if systemctl is-active --quiet xray; then
+                _green "  Status: RODANDO ✓"
             else
-                err "Falha ao iniciar $service_name"
+                _red "  Status: PARADO ✗"
             fi
+        else
+            _yellow "  Status: SERVIÇO NÃO CRIADO"
+        fi
+        
+        echo ""
+        echo "  1) Iniciar Xray"
+        echo "  2) Parar Xray"
+        echo "  3) Reiniciar Xray"
+        echo "  4) Ver Status"
+        echo "  5) Ver Logs"
+        echo "  6) Criar/Recriar Serviço"
+        echo "  7) Habilitar Autostart"
+        echo "  8) Desabilitar Autostart"
+        echo ""
+        echo "  0) Voltar"
+        echo ""
+        echo "═══════════════════════════════════════"
+        echo ""
+        
+        read -p "Escolha uma opção: " option
+        
+        case $option in
+            1) start_service ;;
+            2) stop_service ;;
+            3) restart_service ;;
+            4) status_service ;;
+            5) journalctl -u xray -f ;;
+            6) recreate_service ;;
+            7) enable_service ;;
+            8) disable_service ;;
+            0) break ;;
+            *) _red "Opção inválida" ;;
+        esac
+        
+        echo ""
+        read -p "Pressione ENTER para continuar..."
+    done
+}
+
+# ════════════════════════════════════════════════════════════════════════
+# PONTO DE ENTRADA
+# ════════════════════════════════════════════════════════════════════════
+
+main() {
+    case "${1:-}" in
+        create)
+            create_service
+            ;;
+        recreate)
+            recreate_service
+            ;;
+        start)
+            start_service
             ;;
         stop)
-            systemctl stop $service_name
-            if [[ $? -eq 0 ]]; then
-                msg "✓ Serviço $service_name parado"
-            else
-                err "Falha ao parar $service_name"
-            fi
+            stop_service
             ;;
         restart)
-            systemctl restart $service_name
-            if [[ $? -eq 0 ]]; then
-                msg "✓ Serviço $service_name reiniciado"
-            else
-                err "Falha ao reiniciar $service_name"
-            fi
+            restart_service
             ;;
         status)
-            systemctl status $service_name
+            status_service
             ;;
         enable)
-            systemctl enable $service_name
-            msg "✓ Serviço $service_name habilitado para iniciar com o sistema"
+            enable_service
             ;;
         disable)
-            systemctl disable $service_name
-            msg "✓ Serviço $service_name desabilitado"
-            ;;
-        reload)
-            systemctl reload $service_name
-            if [[ $? -eq 0 ]]; then
-                msg "✓ Configuração do serviço $service_name recarregada"
-            else
-                err "Falha ao recarregar $service_name"
-            fi
-            ;;
-        *)
-            err "Ação desconhecida: $action"
-            return 1
-            ;;
-    esac
-}
-
-# Função para recarregar arquivo de serviço
-reload_service_file() {
-    local service_name=$1
-    
-    msg "Recriando serviço $service_name..."
-    install_service $service_name
-    
-    msg "Recarregando daemon do systemd..."
-    systemctl daemon-reload
-    
-    msg "Reiniciando serviço..."
-    systemctl restart $service_name
-    
-    if check_service_status $service_name; then
-        msg "✓ Serviço $service_name recarregado com sucesso!"
-    else
-        err "Falha ao recarregar serviço $service_name"
-    fi
-}
-
-# Função para listar todos os serviços relacionados
-list_services() {
-    echo ""
-    echo "═══════════════════════════════════════"
-    echo "  SERVIÇOS DO SISTEMA"
-    echo "═══════════════════════════════════════"
-    echo ""
-    
-    # Verificar Xray
-    if [[ -f /lib/systemd/system/$is_core.service ]]; then
-        echo -n "  $is_core_name: "
-        check_service_status $is_core
-    fi
-    
-    # Verificar Caddy
-    if [[ -f /lib/systemd/system/caddy.service ]]; then
-        echo -n "  Caddy: "
-        check_service_status caddy
-    fi
-    
-    echo ""
-    echo "═══════════════════════════════════════"
-    echo ""
-}
-
-# Função para testar configuração do serviço
-test_service_config() {
-    local service_name=$1
-    
-    case $service_name in
-        xray | v2ray)
-            # Testar configuração do Xray
-            msg "Testando configuração do $is_core_name..."
-            if $is_core_bin test -config $is_config_json -confdir $is_conf_dir; then
-                _green "✓ Configuração válida!"
-                return 0
-            else
-                _red "✗ Configuração inválida!"
-                return 1
-            fi
-            ;;
-        caddy)
-            # Testar configuração do Caddy
-            msg "Testando configuração do Caddy..."
-            if $is_caddy_bin validate --config $is_caddyfile --adapter caddyfile; then
-                _green "✓ Configuração válida!"
-                return 0
-            else
-                _red "✗ Configuração inválida!"
-                return 1
-            fi
-            ;;
-        *)
-            warn "Serviço desconhecido: $service_name"
-            return 1
-            ;;
-    esac
-}
-
-# Função para ver logs do serviço
-view_service_logs() {
-    local service_name=$1
-    local lines=${2:-50}
-    
-    echo ""
-    echo "═══════════════════════════════════════"
-    echo "  LOGS DO SERVIÇO: $service_name"
-    echo "  (Últimas $lines linhas)"
-    echo "═══════════════════════════════════════"
-    echo ""
-    
-    journalctl -u $service_name -n $lines --no-pager
-    
-    echo ""
-    echo "═══════════════════════════════════════"
-    echo ""
-    echo "Para ver logs em tempo real, use:"
-    echo "  journalctl -u $service_name -f"
-    echo ""
-}
-
-# Função para corrigir permissões do serviço
-fix_service_permissions() {
-    msg "Corrigindo permissões dos arquivos de serviço..."
-    
-    # Xray/V2Ray
-    if [[ -f /lib/systemd/system/$is_core.service ]]; then
-        chmod 644 /lib/systemd/system/$is_core.service
-        msg "✓ Permissões do $is_core_name corrigidas"
-    fi
-    
-    # Caddy
-    if [[ -f /lib/systemd/system/caddy.service ]]; then
-        chmod 644 /lib/systemd/system/caddy.service
-        msg "✓ Permissões do Caddy corrigidas"
-    fi
-    
-    systemctl daemon-reload
-    msg "✓ Daemon recarregado"
-}
-
-# Ajuda para uso do systemd.sh
-show_systemd_help() {
-    cat <<EOF
-
-═══════════════════════════════════════════════════════════════════
-  Gerenciador de Serviços Systemd - Xray2026
-═══════════════════════════════════════════════════════════════════
-
-Uso: systemd.sh [comando] [serviço] [opções]
-
-COMANDOS:
-  install <serviço>           Instalar/criar serviço
-  remove <serviço>            Remover serviço
-  start <serviço>             Iniciar serviço
-  stop <serviço>              Parar serviço
-  restart <serviço>           Reiniciar serviço
-  status <serviço>            Ver status do serviço
-  enable <serviço>            Habilitar início automático
-  disable <serviço>           Desabilitar início automático
-  reload <serviço>            Recarregar configuração
-  test <serviço>              Testar configuração
-  logs <serviço> [linhas]     Ver logs (padrão: 50 linhas)
-  list                        Listar todos os serviços
-  fix-permissions             Corrigir permissões
-
-SERVIÇOS DISPONÍVEIS:
-  xray                        Serviço Xray-core
-  v2ray                       Serviço V2Ray-core
-  caddy                       Serviço Caddy server
-
-EXEMPLOS:
-  systemd.sh install xray
-  systemd.sh restart xray
-  systemd.sh logs xray 100
-  systemd.sh test xray
-  systemd.sh list
-
-═══════════════════════════════════════════════════════════════════
-
-EOF
-}
-
-# Processar comandos da linha de comando
-if [[ $1 ]]; then
-    case $1 in
-        install)
-            install_service $2
+            disable_service
             ;;
         remove)
-            remove_service $2
+            remove_service
             ;;
-        start | stop | restart | status | enable | disable | reload)
-            manage_service $1 $2
-            ;;
-        test)
-            test_service_config $2
-            ;;
-        logs)
-            view_service_logs $2 $3
-            ;;
-        list)
-            list_services
-            ;;
-        fix-permissions)
-            fix_service_permissions
-            ;;
-        help | --help | -h)
-            show_systemd_help
+        menu)
+            show_service_menu
             ;;
         *)
-            err "Comando desconhecido: $1"
-            show_systemd_help
-            exit 1
+            show_service_menu
             ;;
     esac
+}
+
+# Executar se chamado diretamente
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
 fi
