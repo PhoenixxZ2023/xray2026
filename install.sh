@@ -159,7 +159,7 @@ install_pkg() {
     fi
 }
 
-# Baixar arquivo - VERSÃO LIMPA SEM POLUIÇÃO
+# Baixar arquivo - VERSÃO SIMPLES E LIMPA
 download() {
     case $1 in
     core)
@@ -188,22 +188,13 @@ download() {
 
     echo
     echo -e "${cyan}┌────────────────────────────────────────┐${none}"
-    echo -e "${cyan}│${none} ${icon}  Baixando ${name}"
+    echo -e "${cyan}│${none} ${icon}  Baixando ${name}${none}"
     echo -e "${cyan}└────────────────────────────────────────┘${none}"
     echo -e "  ${gray}${link}${none}"
     echo
-    
-    # Download com barra de progresso limpa
-    _wget -t 3 -q --show-progress -c $link -O $tmpfile 2>&1 | \
-        stdbuf -oL tr '\r' '\n' | \
-        grep --line-buffered -oP '\d+%' | \
-        while read percent; do
-            printf "\r${blue}[$(date +'%T')]${none} Progresso: ${green}${percent}${none}"
-        done
-    
-    # Verificar sucesso
-    if [[ -f $tmpfile ]]; then
-        printf "\r${blue}[$(date +'%T')]${none} Progresso: ${green}100%%${none} ✓\n"
+
+    # Baixar com barra de progresso nativa do wget
+    if _wget -t 3 --show-progress -c $link -O $tmpfile; then
         mv -f $tmpfile $is_ok
         echo
         msg ok "✓ ${name} baixado com sucesso"
