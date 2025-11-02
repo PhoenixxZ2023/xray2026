@@ -312,6 +312,19 @@ exit_and_del_tmpdir() {
     exit
 }
 
+# Sair e remover tmpdir
+exit_and_del_tmpdir() {
+    rm -rf $tmpdir
+    [[ ! $1 ]] && {
+        msg err "Oops..."
+        msg err "Erro durante a instalação..."
+        echo -e "Reportar problema: https://github.com/${is_sh_repo}/issues"
+        echo
+        exit 1
+    }
+    exit
+}
+
 # Criar serviço systemd manualmente
 create_systemd_service() {
     local service_file="/lib/systemd/system/${is_core}.service"
