@@ -117,6 +117,22 @@ msg() {
     echo -e "${color}$(date +'%T')${none}) ${2}"
 }
 
+# Barra de progresso
+show_progress() {
+    local current=$1
+    local total=$2
+    local msg_text="$3"
+    local percent=$((current * 100 / total))
+    local filled=$((percent / 2))
+    local empty=$((50 - filled))
+    
+    printf "\r${blue}[$(date +'%T')]${none} ${msg_text} "
+    printf "${green}█%.0s${none}" $(seq 1 $filled)
+    printf "${gray}░%.0s${none}" $(seq 1 $empty)
+    printf " ${yellow}%d%%${none}" $percent
+    [[ $current -eq $total ]] && echo
+}
+
 # Mostrar mensagem de ajuda
 show_help() {
     echo -e "Uso: $0 [-f xxx | -l | -p xxx | -v xxx | -h]"
@@ -137,7 +153,12 @@ install_pkg() {
     done
     if [[ $cmd_not_found ]]; then
         pkg=$(echo $cmd_not_found | sed 's/,/ /g')
-        msg warn "Instalando pacotes dependentes > ${pkg}"
+        echo
+        echo -e "${cyan}╔════════════════════════════════════════╗${none}"
+        echo -e "${cyan}║${none}  📦 Instalando Dependências        ${cyan}║${none}"
+        echo -e "${cyan}╚════════════════════════════════════════╝${none}"
+        echo -e "  Pacotes: ${yellow}${pkg}${none}"
+        echo
         $cmd install -y $pkg &>/dev/null
         if [[ $? != 0 ]]; then
             [[ $cmd =~ yum ]] && yum install epel-release -y &>/dev/null
@@ -147,6 +168,8 @@ install_pkg() {
         else
             >$is_pkg_ok
         fi
+        msg ok "✓ Dependências instaladas com sucesso"
+        echo
     else
         >$is_pkg_ok
     fi
@@ -159,26 +182,40 @@ download() {
         link=https://github.com/${is_core_repo}/releases/latest/download/${is_core}-linux-${is_core_arch}.zip
         [[ $is_core_ver ]] && link="https://github.com/${is_core_repo}/releases/download/${is_core_ver}/${is_core}-linux-${is_core_arch}.zip"
         name=$is_core_name
+        icon="🔧"
         tmpfile=$tmpcore
         is_ok=$is_core_ok
         ;;
     sh)
         link=https://github.com/${is_sh_repo}/releases/latest/download/code.zip
         name="Script $is_core_name"
+        icon="📜"
         tmpfile=$tmpsh
         is_ok=$is_sh_ok
         ;;
     jq)
         link=https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-$is_jq_arch
         name="jq"
+        icon="⚙️"
         tmpfile=$tmpjq
         is_ok=$is_jq_ok
         ;;
     esac
 
-    msg warn "Baixando ${name} > ${link}"
-    if _wget -t 3 -q -c $link -O $tmpfile; then
+    echo
+    echo -e "${cyan}┌────────────────────────────────────────┐${none}"
+    echo -e "${cyan}│${none} ${icon}  Baixando ${name}"
+    echo -e "${cyan}└────────────────────────────────────────┘${none}"
+    echo -e "  ${gray}${link}${none}"
+    echo
+    
+    if _wget -t 3 -q --show-progress -c $link -O $tmpfile 2>&1 | grep --line-buffered "%" | sed -u -e "s,.*\([0-9]\+%\).*,${blue}[$(date +'%T')]${none} Progresso: ${green}\1${none}," ; then
         mv -f $tmpfile $is_ok
+        echo
+        msg ok "✓ ${name} baixado com sucesso"
+    else
+        echo
+        msg err "✗ Falha ao baixar ${name}"
     fi
 }
 
@@ -289,7 +326,6 @@ exit_and_del_tmpdir() {
     }
     exit
 }
-
 # Criar serviço systemd manualmente
 create_systemd_service() {
     local service_file="/lib/systemd/system/${is_core}.service"
@@ -320,6 +356,7 @@ EOF
 
     systemctl daemon-reload
     systemctl enable $is_core &>/dev/null
+    msg ok "✓ Serviço systemd configurado"
 }
 
 # Criar configuração inicial básica
@@ -350,6 +387,7 @@ create_initial_config() {
   }
 }
 EOF
+    msg ok "✓ Configuração inicial criada"
 }
 
 # Principal
@@ -366,16 +404,30 @@ main() {
     # Mostrar mensagem de boas-vindas
     clear
     echo
-    echo "........... $is_core_name 2026 - Script Avançado by $author .........."
-    echo "........... Instalação do Xray-core Oficial (XTLS) .........."
+    echo -e "${cyan}╔════════════════════════════════════════════════════════════════╗${none}"
+    echo -e "${cyan}║${none}                                                              ${cyan}║${none}"
+    echo -e "${cyan}║${none}     ${green}██╗  ██╗██████╗  █████╗ ██╗   ██╗    ██████╗  ██████╗${none}     ${cyan}║${none}"
+    echo -e "${cyan}║${none}     ${green}╚██╗██╔╝██╔══██╗██╔══██╗╚██╗ ██╔╝    ╚════██╗██╔═████╗${none}    ${cyan}║${none}"
+    echo -e "${cyan}║${none}     ${green} ╚███╔╝ ██████╔╝███████║ ╚████╔╝      █████╔╝██║██╔██║${none}    ${cyan}║${none}"
+    echo -e "${cyan}║${none}     ${green} ██╔██╗ ██╔══██╗██╔══██║  ╚██╔╝      ██╔═══╝ ████╔╝██║${none}    ${cyan}║${none}"
+    echo -e "${cyan}║${none}     ${green}██╔╝ ██╗██║  ██║██║  ██║   ██║       ███████╗╚██████╔╝${none}    ${cyan}║${none}"
+    echo -e "${cyan}║${none}     ${green}╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝       ╚══════╝ ╚═════╝${none}     ${cyan}║${none}"
+    echo -e "${cyan}║${none}                                                              ${cyan}║${none}"
+    echo -e "${cyan}║${none}         ${yellow}Script Avançado by ${author}${none}                ${cyan}║${none}"
+    echo -e "${cyan}║${none}         ${blue}Instalação do Xray-core Oficial (XTLS)${none}         ${cyan}║${none}"
+    echo -e "${cyan}║${none}                                                              ${cyan}║${none}"
+    echo -e "${cyan}╚════════════════════════════════════════════════════════════════╝${none}"
     echo
-    msg ok "Repositório: https://github.com/${is_sh_repo}"
+    msg ok "📦 Repositório: ${cyan}https://github.com/${is_sh_repo}${none}"
     echo
 
     # Iniciar instalação...
-    msg warn "Iniciando instalação..."
-    [[ $is_core_ver ]] && msg warn "Versão do ${is_core_name}: ${yellow}$is_core_ver${none}"
-    [[ $proxy ]] && msg warn "Usando proxy: ${yellow}$proxy${none}"
+    echo -e "${yellow}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${none}"
+    msg warn "🚀 Iniciando instalação..."
+    [[ $is_core_ver ]] && msg warn "📌 Versão do ${is_core_name}: ${yellow}$is_core_ver${none}"
+    [[ $proxy ]] && msg warn "🌐 Usando proxy: ${yellow}$proxy${none}"
+    echo -e "${yellow}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${none}"
+    echo
     
     # Criar tmpdir
     mkdir -p $tmpdir
@@ -416,6 +468,9 @@ main() {
     }
 
     # Aguardar conclusão das tarefas em segundo plano
+    echo
+    msg warn "⏳ Aguardando conclusão dos downloads..."
+    echo
     wait
 
     # Verificar status das tarefas em segundo plano
@@ -442,8 +497,13 @@ main() {
         msg err "Falha ao obter IP do servidor."
         exit_and_del_tmpdir
     }
+    
+    msg ok "🌍 IP do servidor obtido: ${cyan}${ip}${none}"
+    echo
 
     # Criar diretório sh...
+    echo
+    msg warn "📂 Criando estrutura de diretórios..."
     mkdir -p $is_sh_dir
 
     # Copiar arquivo sh ou extrair zip sh
@@ -452,6 +512,7 @@ main() {
     else
         unzip -qo $is_sh_ok -d $is_sh_dir
     fi
+    msg ok "✓ Scripts instalados"
 
     # Criar diretório bin do core
     mkdir -p $is_core_dir/bin
@@ -462,6 +523,7 @@ main() {
     else
         unzip -qo $is_core_ok -d $is_core_dir/bin
     fi
+    msg ok "✓ Xray-core extraído"
 
     # Adicionar alias
     echo "alias $is_core=$is_sh_bin" >>/root/.bashrc
@@ -474,6 +536,8 @@ main() {
 
     # chmod
     chmod +x $is_core_bin $is_sh_bin /usr/bin/jq
+    msg ok "✓ Permissões configuradas"
+    echo
 
     # Criar diretório de log
     mkdir -p $is_log_dir
@@ -483,6 +547,7 @@ main() {
     
     # Criar arquivo de banco de dados de usuários
     echo "[]" > $is_core_dir/users/users.json
+    msg ok "✓ Banco de dados inicializado"
 
     # Mostrar mensagem de dica
     msg ok "Gerando arquivo de configuração..."
@@ -498,26 +563,40 @@ main() {
     
     # Mostrar informações de instalação concluída
     echo
-    echo "=========================================="
-    msg ok "Instalação concluída com sucesso!"
-    echo "=========================================="
+    echo -e "${green}╔════════════════════════════════════════════════════════════════╗${none}"
+    echo -e "${green}║${none}                                                              ${green}║${none}"
+    echo -e "${green}║${none}     ✓✓✓  ${green}INSTALAÇÃO CONCLUÍDA COM SUCESSO!${none}  ✓✓✓         ${green}║${none}"
+    echo -e "${green}║${none}                                                              ${green}║${none}"
+    echo -e "${green}╚════════════════════════════════════════════════════════════════╝${none}"
     echo
-    msg ok "Execute o comando: ${green}xray${none} para gerenciar"
-    msg ok "Execute o comando: ${green}xray help${none} para ajuda"
-    msg ok "Execute o comando: ${green}xray add${none} para adicionar configuração"
+    echo -e "${cyan}┌────────────────────────────────────────────────────────────────┐${none}"
+    echo -e "${cyan}│${none} ${yellow}COMANDOS PRINCIPAIS${none}                                           ${cyan}│${none}"
+    echo -e "${cyan}├────────────────────────────────────────────────────────────────┤${none}"
+    echo -e "${cyan}│${none}  🚀 Iniciar menu      : ${green}xray${none}                                ${cyan}│${none}"
+    echo -e "${cyan}│${none}  📖 Ver ajuda         : ${green}xray help${none}                           ${cyan}│${none}"
+    echo -e "${cyan}│${none}  ➕ Adicionar config  : ${green}xray add${none}                            ${cyan}│${none}"
+    echo -e "${cyan}└────────────────────────────────────────────────────────────────┘${none}"
     echo
-    msg ok "Gerenciamento de usuários disponível!"
-    msg ok "Monitoramento de tráfego habilitado!"
-    msg ok "Sistema pronto para configurar protocolos!"
+    echo -e "${cyan}┌────────────────────────────────────────────────────────────────┐${none}"
+    echo -e "${cyan}│${none} ${yellow}FUNCIONALIDADES DISPONÍVEIS${none}                                   ${cyan}│${none}"
+    echo -e "${cyan}├────────────────────────────────────────────────────────────────┤${none}"
+    echo -e "${cyan}│${none}  ✓ Gerenciamento completo de usuários                       ${cyan}│${none}"
+    echo -e "${cyan}│${none}  ✓ Monitoramento de tráfego em tempo real                   ${cyan}│${none}"
+    echo -e "${cyan}│${none}  ✓ Verificação automática de vencimento                     ${cyan}│${none}"
+    echo -e "${cyan}│${none}  ✓ Geração de links e QR Codes                              ${cyan}│${none}"
+    echo -e "${cyan}│${none}  ✓ Suporte a múltiplos protocolos                           ${cyan}│${none}"
+    echo -e "${cyan}└────────────────────────────────────────────────────────────────┘${none}"
     echo
-    echo "=========================================="
-    echo
-    msg warn "PRÓXIMO PASSO: Execute ${green}xray add${none} para criar sua primeira configuração"
+    echo -e "${yellow}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${none}"
+    echo -e "  ${magenta}⚡ PRÓXIMO PASSO:${none} Execute ${green}xray add${none} para criar sua primeira configuração"
+    echo -e "${yellow}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${none}"
     echo
     
     # ========== CORREÇÕES AUTOMÁTICAS ==========
     echo
-    msg ok "Aplicando correções automáticas..."
+    echo -e "${blue}╔════════════════════════════════════════════════════════════════╗${none}"
+    echo -e "${blue}║${none}  🔧 Aplicando Correções Automáticas                         ${blue}║${none}"
+    echo -e "${blue}╚════════════════════════════════════════════════════════════════╝${none}"
     echo
     
     # Correção 1: Garantir is_sh_dir correto no core.sh
@@ -545,7 +624,9 @@ main() {
     fi
     
     echo
-    msg ok "✓ Correções aplicadas com sucesso!"
+    echo -e "${green}╔════════════════════════════════════════════════════════════════╗${none}"
+    echo -e "${green}║${none}  ✓ Todas as correções aplicadas com sucesso!               ${green}║${none}"
+    echo -e "${green}╚════════════════════════════════════════════════════════════════╝${none}"
     echo
     # ========== FIM DAS CORREÇÕES ==========
     
