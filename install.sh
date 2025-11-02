@@ -117,22 +117,6 @@ msg() {
     echo -e "${color}$(date +'%T')${none}) ${2}"
 }
 
-# Barra de progresso
-show_progress() {
-    local current=$1
-    local total=$2
-    local msg_text="$3"
-    local percent=$((current * 100 / total))
-    local filled=$((percent / 2))
-    local empty=$((50 - filled))
-    
-    printf "\r${blue}[$(date +'%T')]${none} ${msg_text} "
-    printf "${green}█%.0s${none}" $(seq 1 $filled)
-    printf "${gray}░%.0s${none}" $(seq 1 $empty)
-    printf " ${yellow}%d%%${none}" $percent
-    [[ $current -eq $total ]] && echo
-}
-
 # Mostrar mensagem de ajuda
 show_help() {
     echo -e "Uso: $0 [-f xxx | -l | -p xxx | -v xxx | -h]"
@@ -175,7 +159,7 @@ install_pkg() {
     fi
 }
 
-# Baixar arquivo
+# Baixar arquivo - VERSÃO LIMPA SEM POLUIÇÃO
 download() {
     case $1 in
     core)
@@ -209,7 +193,17 @@ download() {
     echo -e "  ${gray}${link}${none}"
     echo
     
-    if _wget -t 3 -q --show-progress -c $link -O $tmpfile 2>&1 | grep --line-buffered "%" | sed -u -e "s,.*\([0-9]\+%\).*,${blue}[$(date +'%T')]${none} Progresso: ${green}\1${none}," ; then
+    # Download com barra de progresso limpa
+    _wget -t 3 -q --show-progress -c $link -O $tmpfile 2>&1 | \
+        stdbuf -oL tr '\r' '\n' | \
+        grep --line-buffered -oP '\d+%' | \
+        while read percent; do
+            printf "\r${blue}[$(date +'%T')]${none} Progresso: ${green}${percent}${none}"
+        done
+    
+    # Verificar sucesso
+    if [[ -f $tmpfile ]]; then
+        printf "\r${blue}[$(date +'%T')]${none} Progresso: ${green}100%%${none} ✓\n"
         mv -f $tmpfile $is_ok
         echo
         msg ok "✓ ${name} baixado com sucesso"
@@ -326,6 +320,7 @@ exit_and_del_tmpdir() {
     }
     exit
 }
+
 # Criar serviço systemd manualmente
 create_systemd_service() {
     local service_file="/lib/systemd/system/${is_core}.service"
