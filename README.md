@@ -47,8 +47,7 @@ Xray2026 é uma versão melhorada e traduzida do script Xray com funcionalidades
 
 ## 🚀 Instalação Rápida
 
-```bash
-# Instalação com um comando
+```
 bash <(curl -Ls https://raw.githubusercontent.com/PhoenixxZ2023/xray2026/main/install.sh)
 ```
 
