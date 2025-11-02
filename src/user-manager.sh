@@ -1,442 +1,332 @@
 #!/bin/bash
 
-# ============================================================================
-# user-manager.sh - VERSÃO COMPLETA COM AS 3 ADIÇÕES
-# Sistema de Gerenciamento de Usuários para Xray2026
-# ============================================================================
-
+# Xray2026 - Gerenciador de Usuários
 # Autor: PhoenixxZ2023
-# Versão: 2.0 (com suporte a abreviações e geração automática de links)
+# GitHub: https://github.com/PhoenixxZ2023/xray2026
 
-# ════════════════════════════════════════════════════════════════════════
-# VARIÁVEIS GLOBAIS
-# ════════════════════════════════════════════════════════════════════════
-
-# Diretórios
-USERS_DB="/etc/xray/users/users.json"
+# Diretórios e arquivos
 USERS_DIR="/etc/xray/users"
+USERS_DB="$USERS_DIR/users.json"
+CONFIG_JSON="/etc/xray/config.json"
 
-# Cores para output
-_red() { echo -e "\e[31m$@\e[0m"; }
-_green() { echo -e "\e[92m$@\e[0m"; }
-_yellow() { echo -e "\e[33m$@\e[0m"; }
-_blue() { echo -e "\e[94m$@\e[0m"; }
+# Garantir que o banco de dados existe
+ensure_db() {
+    [[ ! -d $USERS_DIR ]] && mkdir -p $USERS_DIR
+    [[ ! -f $USERS_DB ]] && echo "[]" > $USERS_DB
+}
 
-
-# ════════════════════════════════════════════════════════════════════════
-# ADIÇÃO 1: FUNÇÃO PARA GERAR LINKS DE USUÁRIOS
-# ════════════════════════════════════════════════════════════════════════
-
-# ========== FUNÇÃO PARA GERAR LINKS DE USUÁRIOS ==========
-generate_user_link() {
-    local username="$1"
-    local uuid="$2"
-    local protocol="$3"
-    
-    # Carregar configuração ativa
-    if [[ -f /etc/xray/active_config.conf ]]; then
-        source /etc/xray/active_config.conf
+# Gerar UUID único
+generate_uuid() {
+    if command -v uuidgen &>/dev/null; then
+        uuidgen | tr '[:upper:]' '[:lower:]'
     else
-        _yellow "⚠ Nenhuma configuração ativa encontrada"
-        _yellow "  Use: xray add para criar uma configuração primeiro"
+        cat /proc/sys/kernel/random/uuid
+    fi
+}
+
+# Adicionar novo usuário
+add_user() {
+    local username="$1"
+    local days="$2"
+    local protocol="${3:-vless}"
+    
+    # Validações
+    [[ -z $username ]] && {
+        echo "ERRO: Nome de usuário não pode ser vazio"
+        return 1
+    }
+    
+    [[ -z $days ]] && {
+        echo "ERRO: Dias de validade não pode ser vazio"
+        return 1
+    }
+    
+    # Verificar se usuário já existe
+    if jq -e ".[] | select(.username == \"$username\")" $USERS_DB &>/dev/null; then
+        echo "ERRO: Usuário '$username' já existe!"
         return 1
     fi
     
-    # Gerar link baseado no protocolo e segurança
-    case "$protocol" in
-        vless)
-            if [[ "$security" == "xtls" ]]; then
-                # VLESS com XTLS
-                link="vless://${uuid}@${domain}:${port}?type=ws&security=xtls&flow=${flow}&path=${path}&sni=${domain}#${username}"
-            else
-                # VLESS com TLS normal
-                link="vless://${uuid}@${domain}:${port}?type=ws&security=tls&path=${path}&sni=${domain}#${username}"
-            fi
-            ;;
-        vmess)
-            # VMess com base64
-            vmess_json=$(cat <<VMESS_JSON
-{
-  "v": "2",
-  "ps": "${username}",
-  "add": "${domain}",
-  "port": "${port}",
-  "id": "${uuid}",
-  "aid": "0",
-  "net": "ws",
-  "type": "none",
-  "host": "${domain}",
-  "path": "${path}",
-  "tls": "tls"
-}
-VMESS_JSON
-)
-            link="vmess://$(echo -n "$vmess_json" | base64 -w0)"
-            ;;
-        *)
-            _red "✗ Protocolo desconhecido: $protocol"
-            return 1
-            ;;
-    esac
-    
-    echo "$link"
-}
-
-
-# ════════════════════════════════════════════════════════════════════════
-# FUNÇÕES DE GERENCIAMENTO DE USUÁRIOS
-# ════════════════════════════════════════════════════════════════════════
-
-# Inicializar banco de dados de usuários
-init_users_db() {
-    if [[ ! -d "$USERS_DIR" ]]; then
-        mkdir -p "$USERS_DIR"
-    fi
-    
-    if [[ ! -f "$USERS_DB" ]]; then
-        echo "[]" > "$USERS_DB"
-    fi
-}
-
-# Adicionar usuário ao banco de dados
-add_user_to_db() {
-    local username="$1"
-    local uuid="$2"
-    local protocol="$3"
-    local days="$4"
-    local created_at=$(date +%s)
-    local expires_at=$((created_at + (days * 86400)))
-    
-    # Criar entrada JSON
-    local user_entry=$(cat <<JSON_ENTRY
-{
-  "username": "$username",
-  "uuid": "$uuid",
-  "protocol": "$protocol",
-  "created_at": $created_at,
-  "expires_at": $expires_at,
-  "days": $days,
-  "status": "active"
-}
-JSON_ENTRY
-)
-    
-    # Adicionar ao banco de dados
-    local temp_db=$(mktemp)
-    jq ". += [$user_entry]" "$USERS_DB" > "$temp_db"
-    mv "$temp_db" "$USERS_DB"
-}
-
-# Verificar se usuário existe
-user_exists() {
-    local username="$1"
-    jq -e ".[] | select(.username == \"$username\")" "$USERS_DB" >/dev/null 2>&1
-}
-
-
-# ════════════════════════════════════════════════════════════════════════
-# FUNÇÃO PRINCIPAL: ADICIONAR USUÁRIO
-# ════════════════════════════════════════════════════════════════════════
-
-add_user() {
-    echo ""
-    echo "═══════════════════════════════════════"
-    echo "  ADICIONAR NOVO USUÁRIO"
-    echo "═══════════════════════════════════════"
-    echo ""
-    
-    # Inicializar banco de dados
-    init_users_db
-    
-    # Solicitar nome do usuário
-    while true; do
-        read -p "Nome do usuário: " username
-        
-        if [[ -z "$username" ]]; then
-            _red "✗ Nome não pode ser vazio"
-            continue
-        fi
-        
-        if user_exists "$username"; then
-            _red "✗ Usuário '$username' já existe"
-            continue
-        fi
-        
-        break
-    done
-    
-    # Solicitar dias de validade
-    while true; do
-        read -p "Dias de validade: " days
-        
-        if [[ ! "$days" =~ ^[0-9]+$ ]]; then
-            _red "✗ Digite apenas números"
-            continue
-        fi
-        
-        if [[ $days -lt 1 ]]; then
-            _red "✗ Mínimo 1 dia"
-            continue
-        fi
-        
-        break
-    done
-    
-    # ════════════════════════════════════════════════════════════════
-    # ADIÇÃO 2: SOLICITAR PROTOCOLO COM SUPORTE A ABREVIAÇÕES
-    # ════════════════════════════════════════════════════════════════
-    
-    read -p "Protocolo (vl=vless/vm=vmess) [vl]: " protocol_input
-    protocol_input=${protocol_input:-vl}
-    
-    # Converter abreviações
-    case "$protocol_input" in
-        vl|VL|vless|VLESS)
-            protocol="vless"
-            ;;
-        vm|VM|vmess|VMESS)
-            protocol="vmess"
-            ;;
-        *)
-            _yellow "⚠ Protocolo desconhecido, usando vless"
-            protocol="vless"
-            ;;
-    esac
-    
     # Gerar UUID
-    uuid=$(uuidgen)
+    local uuid=$(generate_uuid)
     
-    # Calcular datas
-    created_at=$(date +%s)
-    expires_at=$((created_at + (days * 86400)))
-    expires_readable=$(date -d "@$expires_at" "+%d/%m/%Y %H:%M:%S")
-    created_readable=$(date -d "@$created_at" "+%d/%m/%Y %H:%M:%S")
+    # Calcular data de expiração
+    local created_date=$(date +%s)
+    local expiration_date=$(date -d "+${days} days" +%s)
+    local expiration_readable=$(date -d "+${days} days" "+%d/%m/%Y %H:%M:%S")
     
-    echo ""
-    _yellow "⏳ Criando usuário..."
+    # Criar objeto do usuário
+    local user_data=$(jq -n \
+        --arg username "$username" \
+        --arg uuid "$uuid" \
+        --arg protocol "$protocol" \
+        --arg created "$created_date" \
+        --arg expires "$expiration_date" \
+        --arg expires_readable "$expiration_readable" \
+        --arg status "active" \
+        '{
+            username: $username,
+            uuid: $uuid,
+            protocol: $protocol,
+            created_at: $created,
+            expires_at: $expires,
+            expires_readable: $expires_readable,
+            status: $status,
+            traffic_used: 0,
+            last_connection: null
+        }')
     
     # Adicionar ao banco de dados
-    add_user_to_db "$username" "$uuid" "$protocol" "$days"
+    jq ". += [$user_data]" $USERS_DB > $USERS_DB.tmp && mv $USERS_DB.tmp $USERS_DB
     
-    # Adicionar ao Xray (adicionar cliente na configuração)
-    # Aqui você adicionaria a lógica para inserir o cliente no config.json
-    # Por exemplo, usando jq para adicionar o cliente ao inbound apropriado
+    # Adicionar ao config.json do Xray
+    add_user_to_xray_config "$uuid" "$protocol"
     
+    # Reiniciar Xray
+    systemctl restart xray
+    
+    echo "✓ Usuário criado com sucesso!"
     echo ""
-    _green "✓ Usuário criado com sucesso!"
-    echo ""
-    
-    # Exibir informações do usuário
     echo "═══════════════════════════════════════"
     echo "  INFORMAÇÕES DO USUÁRIO"
     echo "═══════════════════════════════════════"
     echo "Nome: $username"
     echo "UUID: $uuid"
     echo "Protocolo: $protocol"
-    echo "Criado em: $created_readable"
-    echo "Expira em: $expires_readable"
+    echo "Criado em: $(date -d @$created_date '+%d/%m/%Y %H:%M:%S')"
+    echo "Expira em: $expiration_readable"
     echo "Dias de validade: $days dias"
     echo "Status: Ativo"
     echo "═══════════════════════════════════════"
     
-    # ════════════════════════════════════════════════════════════════
-    # ADIÇÃO 3: GERAR LINK DE CONEXÃO AUTOMATICAMENTE
-    # ════════════════════════════════════════════════════════════════
-    
-    # Gerar link de conexão
-    link=$(generate_user_link "$username" "$uuid" "$protocol")
-    
-    if [[ $? -eq 0 && -n "$link" ]]; then
-        echo ""
-        echo "Link de conexão:"
-        echo "$link"
-        echo ""
-        
-        if command -v qrencode >/dev/null 2>&1; then
-            echo "QR Code:"
-            echo ""
-            qrencode -t ANSIUTF8 "$link"
-            echo ""
-        else
-            echo "💡 Instale qrencode para ver o QR Code: apt install qrencode"
-            echo ""
-        fi
-    fi
-    
-    echo "Pressione ENTER para continuar..."
-    read
+    return 0
 }
 
+# Adicionar usuário ao config.json do Xray
+add_user_to_xray_config() {
+    local uuid="$1"
+    local protocol="$2"
+    
+    # Backup do config
+    cp $CONFIG_JSON ${CONFIG_JSON}.bak
+    
+    # Adicionar cliente ao inbound VLESS
+    if [[ $protocol == "vless" ]]; then
+        jq ".inbounds[] |= if .protocol == \"vless\" then .settings.clients += [{\"id\": \"$uuid\", \"flow\": \"xtls-rprx-vision\", \"level\": 0}] else . end" \
+            $CONFIG_JSON > ${CONFIG_JSON}.tmp && mv ${CONFIG_JSON}.tmp $CONFIG_JSON
+    fi
+    
+    # Adicionar cliente ao inbound VMess
+    if [[ $protocol == "vmess" ]]; then
+        jq ".inbounds[] |= if .protocol == \"vmess\" then .settings.clients += [{\"id\": \"$uuid\", \"alterId\": 0, \"level\": 0}] else . end" \
+            $CONFIG_JSON > ${CONFIG_JSON}.tmp && mv ${CONFIG_JSON}.tmp $CONFIG_JSON
+    fi
+}
 
-# ════════════════════════════════════════════════════════════════════════
-# FUNÇÃO: LISTAR USUÁRIOS
-# ════════════════════════════════════════════════════════════════════════
-
+# Listar todos os usuários
 list_users() {
+    local total=$(jq 'length' $USERS_DB)
+    
     echo ""
-    echo "═══════════════════════════════════════════════════════════"
-    echo "  LISTA DE USUÁRIOS"
-    echo "═══════════════════════════════════════════════════════════"
+    echo "═══════════════════════════════════════════════════════════════════"
+    echo "  LISTA DE USUÁRIOS CADASTRADOS - Total: $total"
+    echo "═══════════════════════════════════════════════════════════════════"
     echo ""
     
-    if [[ ! -f "$USERS_DB" ]] || [[ $(jq '. | length' "$USERS_DB") -eq 0 ]]; then
-        _yellow "Nenhum usuário cadastrado"
-        echo ""
+    if [[ $total -eq 0 ]]; then
+        echo "Nenhum usuário cadastrado."
         return
     fi
     
-    # Cabeçalho
-    printf "%-20s %-10s %-15s %-10s\n" "USUÁRIO" "PROTOCOLO" "EXPIRA EM" "STATUS"
-    echo "───────────────────────────────────────────────────────────"
+    jq -r '.[] | "[\(.status | if . == "active" then "ATIVO" else "EXPIRADO" end)] \(.username)\n  UUID: \(.uuid)\n  Protocolo: \(.protocol)\n  Expira: \(.expires_readable)\n  Tráfego: \(.traffic_used) MB\n"' $USERS_DB
     
-    # Listar usuários
-    jq -r '.[] | "\(.username)|\(.protocol)|\(.expires_at)|\(.status)"' "$USERS_DB" | while IFS='|' read -r user proto expires status; do
-        local now=$(date +%s)
-        local expires_date=$(date -d "@$expires" "+%d/%m/%Y")
-        
-        if [[ $now -gt $expires ]]; then
-            status="Expirado"
-        else
-            status="Ativo"
-        fi
-        
-        printf "%-20s %-10s %-15s %-10s\n" "$user" "$proto" "$expires_date" "$status"
-    done
-    
-    echo ""
+    echo "═══════════════════════════════════════════════════════════════════"
 }
 
-
-# ════════════════════════════════════════════════════════════════════════
-# FUNÇÃO: REMOVER USUÁRIO
-# ════════════════════════════════════════════════════════════════════════
-
-remove_user() {
-    echo ""
-    echo "═══════════════════════════════════════"
-    echo "  REMOVER USUÁRIO"
-    echo "═══════════════════════════════════════"
-    echo ""
+# Deletar usuário
+delete_user() {
+    local username="$1"
     
-    read -p "Nome do usuário: " username
+    [[ -z $username ]] && {
+        echo "ERRO: Nome de usuário não pode ser vazio"
+        return 1
+    }
     
-    if ! user_exists "$username"; then
-        _red "✗ Usuário '$username' não encontrado"
-        echo ""
+    # Verificar se usuário existe
+    if ! jq -e ".[] | select(.username == \"$username\")" $USERS_DB &>/dev/null; then
+        echo "ERRO: Usuário '$username' não encontrado!"
         return 1
     fi
     
-    read -p "Confirma remoção do usuário '$username'? (s/N): " confirm
-    if [[ "$confirm" != "s" && "$confirm" != "S" ]]; then
-        _yellow "Operação cancelada"
-        echo ""
-        return
-    fi
+    # Obter UUID antes de deletar
+    local uuid=$(jq -r ".[] | select(.username == \"$username\") | .uuid" $USERS_DB)
     
     # Remover do banco de dados
-    local temp_db=$(mktemp)
-    jq "del(.[] | select(.username == \"$username\"))" "$USERS_DB" > "$temp_db"
-    mv "$temp_db" "$USERS_DB"
+    jq "del(.[] | select(.username == \"$username\"))" $USERS_DB > $USERS_DB.tmp && mv $USERS_DB.tmp $USERS_DB
     
-    _green "✓ Usuário '$username' removido com sucesso"
-    echo ""
+    # Remover do config.json do Xray
+    remove_user_from_xray_config "$uuid"
+    
+    # Reiniciar Xray
+    systemctl restart xray
+    
+    echo "✓ Usuário '$username' deletado com sucesso!"
 }
 
-
-# ════════════════════════════════════════════════════════════════════════
-# FUNÇÃO: RENOVAR USUÁRIO
-# ════════════════════════════════════════════════════════════════════════
-
-renew_user() {
-    echo ""
-    echo "═══════════════════════════════════════"
-    echo "  RENOVAR USUÁRIO"
-    echo "═══════════════════════════════════════"
-    echo ""
+# Remover usuário do config.json do Xray
+remove_user_from_xray_config() {
+    local uuid="$1"
     
-    read -p "Nome do usuário: " username
+    # Backup do config
+    cp $CONFIG_JSON ${CONFIG_JSON}.bak
     
-    if ! user_exists "$username"; then
-        _red "✗ Usuário '$username' não encontrado"
-        echo ""
+    # Remover de todos os inbounds
+    jq ".inbounds[].settings.clients |= map(select(.id != \"$uuid\"))" \
+        $CONFIG_JSON > ${CONFIG_JSON}.tmp && mv ${CONFIG_JSON}.tmp $CONFIG_JSON
+}
+
+# Alterar data de vencimento
+change_expiration() {
+    local username="$1"
+    local new_days="$2"
+    
+    [[ -z $username ]] && {
+        echo "ERRO: Nome de usuário não pode ser vazio"
+        return 1
+    }
+    
+    [[ -z $new_days ]] && {
+        echo "ERRO: Nova quantidade de dias não pode ser vazia"
+        return 1
+    }
+    
+    # Verificar se usuário existe
+    if ! jq -e ".[] | select(.username == \"$username\")" $USERS_DB &>/dev/null; then
+        echo "ERRO: Usuário '$username' não encontrado!"
         return 1
     fi
     
-    read -p "Adicionar quantos dias? " days
-    
-    if [[ ! "$days" =~ ^[0-9]+$ ]]; then
-        _red "✗ Digite apenas números"
-        echo ""
-        return 1
-    fi
-    
-    # Obter expiry atual
-    local current_expires=$(jq -r ".[] | select(.username == \"$username\") | .expires_at" "$USERS_DB")
-    local now=$(date +%s)
-    
-    # Se já expirou, renovar a partir de agora
-    if [[ $current_expires -lt $now ]]; then
-        local new_expires=$((now + (days * 86400)))
-    else
-        local new_expires=$((current_expires + (days * 86400)))
-    fi
+    # Calcular nova data de expiração
+    local new_expiration=$(date -d "+${new_days} days" +%s)
+    local new_expiration_readable=$(date -d "+${new_days} days" "+%d/%m/%Y %H:%M:%S")
     
     # Atualizar no banco de dados
-    local temp_db=$(mktemp)
-    jq "(.[] | select(.username == \"$username\") | .expires_at) |= $new_expires" "$USERS_DB" > "$temp_db"
-    mv "$temp_db" "$USERS_DB"
+    jq "(.[] | select(.username == \"$username\") | .expires_at) = \"$new_expiration\" | 
+        (.[] | select(.username == \"$username\") | .expires_readable) = \"$new_expiration_readable\" |
+        (.[] | select(.username == \"$username\") | .status) = \"active\"" \
+        $USERS_DB > $USERS_DB.tmp && mv $USERS_DB.tmp $USERS_DB
     
-    local new_expires_date=$(date -d "@$new_expires" "+%d/%m/%Y %H:%M:%S")
-    
-    _green "✓ Usuário renovado até: $new_expires_date"
-    echo ""
+    echo "✓ Data de vencimento atualizada!"
+    echo "Usuário: $username"
+    echo "Nova data de expiração: $new_expiration_readable"
 }
 
-
-# ════════════════════════════════════════════════════════════════════════
-# MENU PRINCIPAL
-# ════════════════════════════════════════════════════════════════════════
-
-show_menu() {
+# Ver detalhes de um usuário específico
+view_user() {
+    local username="$1"
+    
+    [[ -z $username ]] && {
+        echo "ERRO: Nome de usuário não pode ser vazio"
+        return 1
+    }
+    
+    local user_data=$(jq ".[] | select(.username == \"$username\")" $USERS_DB)
+    
+    if [[ -z $user_data ]]; then
+        echo "ERRO: Usuário '$username' não encontrado!"
+        return 1
+    fi
+    
     echo ""
     echo "═══════════════════════════════════════"
-    echo "  GERENCIAMENTO DE USUÁRIOS"
+    echo "  DETALHES DO USUÁRIO"
     echo "═══════════════════════════════════════"
-    echo ""
-    echo "  1) Adicionar usuário"
-    echo "  2) Listar usuários"
-    echo "  3) Remover usuário"
-    echo "  4) Renovar usuário"
-    echo "  0) Voltar"
-    echo ""
-    read -p "Escolha uma opção: " option
-    
-    case $option in
-        1) add_user ;;
-        2) list_users ;;
-        3) remove_user ;;
-        4) renew_user ;;
-        0) return ;;
-        *) _red "Opção inválida" ;;
-    esac
-    
-    show_menu
+    echo "$user_data" | jq -r '
+        "Nome: \(.username)",
+        "UUID: \(.uuid)",
+        "Protocolo: \(.protocol)",
+        "Status: \(.status)",
+        "Criado em: \(.created_at | tonumber | strftime("%d/%m/%Y %H:%M:%S"))",
+        "Expira em: \(.expires_readable)",
+        "Tráfego usado: \(.traffic_used) MB",
+        "Última conexão: \(.last_connection // "Nunca")"
+    '
+    echo "═══════════════════════════════════════"
 }
 
+# Renovar usuário (adicionar mais dias)
+renew_user() {
+    local username="$1"
+    local additional_days="$2"
+    
+    [[ -z $username ]] && {
+        echo "ERRO: Nome de usuário não pode ser vazio"
+        return 1
+    }
+    
+    [[ -z $additional_days ]] && {
+        echo "ERRO: Quantidade de dias não pode ser vazia"
+        return 1
+    }
+    
+    # Verificar se usuário existe
+    if ! jq -e ".[] | select(.username == \"$username\")" $USERS_DB &>/dev/null; then
+        echo "ERRO: Usuário '$username' não encontrado!"
+        return 1
+    fi
+    
+    # Obter data de expiração atual
+    local current_expiration=$(jq -r ".[] | select(.username == \"$username\") | .expires_at" $USERS_DB)
+    
+    # Calcular nova data (adicionar dias à data atual de expiração)
+    local new_expiration=$(date -d "@$current_expiration +${additional_days} days" +%s)
+    local new_expiration_readable=$(date -d "@$new_expiration" "+%d/%m/%Y %H:%M:%S")
+    
+    # Atualizar no banco de dados
+    jq "(.[] | select(.username == \"$username\") | .expires_at) = \"$new_expiration\" | 
+        (.[] | select(.username == \"$username\") | .expires_readable) = \"$new_expiration_readable\" |
+        (.[] | select(.username == \"$username\") | .status) = \"active\"" \
+        $USERS_DB > $USERS_DB.tmp && mv $USERS_DB.tmp $USERS_DB
+    
+    echo "✓ Usuário renovado com sucesso!"
+    echo "Usuário: $username"
+    echo "Dias adicionados: $additional_days"
+    echo "Nova data de expiração: $new_expiration_readable"
+}
 
-# ════════════════════════════════════════════════════════════════════════
-# PONTO DE ENTRADA
-# ════════════════════════════════════════════════════════════════════════
+# Inicializar
+ensure_db
 
-# Se chamado com parâmetro, executar função específica
-if [[ $# -gt 0 ]]; then
-    case $1 in
-        add) add_user ;;
-        list) list_users ;;
-        remove) remove_user ;;
-        renew) renew_user ;;
-        *) show_menu ;;
-    esac
-else
-    show_menu
-fi
+# Chamar função baseada no argumento
+case "$1" in
+    add)
+        add_user "$2" "$3" "$4"
+        ;;
+    list)
+        list_users
+        ;;
+    delete)
+        delete_user "$2"
+        ;;
+    view)
+        view_user "$2"
+        ;;
+    change-expiration)
+        change_expiration "$2" "$3"
+        ;;
+    renew)
+        renew_user "$2" "$3"
+        ;;
+    *)
+        echo "Uso: $0 {add|list|delete|view|change-expiration|renew} [argumentos]"
+        echo ""
+        echo "Exemplos:"
+        echo "  $0 add joao 30 vless         # Adicionar usuário 'joao' válido por 30 dias"
+        echo "  $0 list                       # Listar todos os usuários"
+        echo "  $0 delete joao                # Deletar usuário 'joao'"
+        echo "  $0 view joao                  # Ver detalhes do usuário 'joao'"
+        echo "  $0 change-expiration joao 60  # Alterar validade para 60 dias"
+        echo "  $0 renew joao 30              # Adicionar 30 dias à validade atual"
+        exit 1
+        ;;
+esac
