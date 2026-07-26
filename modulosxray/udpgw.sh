@@ -12,6 +12,7 @@
 # Correções Aplicadas:
 #   - Limpeza garantida do diretório de compilação no cenário de sucesso
 #   - Segurança no path absoluto do SystemD
+#   - Blindagem de Memória e Conexões (Engenharia DragonCore)
 
 set -Eeuo pipefail
 trap 'echo -e "\n\033[1;31m[ERRO]\033[0m Falha na linha $LINENO"; sleep 2' ERR
@@ -136,7 +137,8 @@ After=network.target xray.service
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:${port} --max-clients ${max} --max-connections-for-client 10
+LimitNOFILE=65536
+ExecStart=/usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:${port} --max-clients ${max} --max-connections-for-client 10 --client-socket-sndbuf 524288
 Restart=always
 RestartSec=3
 StandardOutput=journal
