@@ -1,5 +1,5 @@
 #!/bin/bash
-# limiterxray.sh - TURBONET XRAY V1.3
+# limiterxray.sh - TURBONET XRAY V1.3 (Com Guilhotina de Sessões)
 # Correções aplicadas V1.2:
 # - PORTA API DINÂMICA: Detecta automaticamente do config.json
 # - Corrigido conflito de porta entre limiter e core_manager
@@ -8,7 +8,7 @@
 #
 # Melhorias V1.3 (Segurança e Zero Downtime):
 # - HOT RELOAD NO BLOQUEIO: Não dá restart no Xray, bloqueia/desbloqueia via API silenciosamente
-# - BLOQUEIO SSH/SOCKS5: Trava a senha Linux do excedente para impedir bypass
+# - GUILHOTINA SSH/SOCKS5: Derruba conexões ativas na hora do estouro da cota (pkill + chage)
 
 set -Eeuo pipefail
 
@@ -365,9 +365,10 @@ func_set_limit() {
                 apply_config_change_and_reload && echo -e "${TXT_GREEN}✅ Usuário desbloqueado!${RESET}"
             fi
             
-            # ⚠️ V1.3: SSH/SOCKS5 Unlock
+            # ⚠️ V1.3: SSH/SOCKS5 Unlock Total
             if id "$nick" &>/dev/null; then
-                passwd -u "$nick" 2>/dev/null || true
+                usermod -U "$nick" 2>/dev/null || true
+                chage -E -1 "$nick" 2>/dev/null || true
             fi
             
             release_lock
@@ -465,9 +466,10 @@ func_remove_limit() {
                 apply_config_change_and_reload
             fi
             
-            # ⚠️ V1.3: SSH/SOCKS5 Unlock
+            # ⚠️ V1.3: SSH/SOCKS5 Unlock Total
             if id "$nick" &>/dev/null; then
-                passwd -u "$nick" 2>/dev/null || true
+                usermod -U "$nick" 2>/dev/null || true
+                chage -E -1 "$nick" 2>/dev/null || true
             fi
             
             release_lock
@@ -577,9 +579,11 @@ func_check_and_block() {
                         config_changed=true
                     fi
                     
-                    # ⚠️ V1.3: Bloqueio SSH (Trava senha Linux)
+                    # ⚠️ V1.3: Bloqueio SSH (Guilhotina: Trava senha e derruba conexões ativas)
                     if id "$nick" &>/dev/null; then
-                        passwd -l "$nick" 2>/dev/null || true
+                        usermod -L "$nick" 2>/dev/null || true
+                        chage -E 0 "$nick" 2>/dev/null || true
+                        pkill -u "$nick" 2>/dev/null || true
                     fi
                     
                     blocked_count=$(( blocked_count + 1 ))
