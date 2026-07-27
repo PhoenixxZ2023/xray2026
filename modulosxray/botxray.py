@@ -1,18 +1,15 @@
 """
-botxray.py - TURBONET XRAY V1.3 (PRO)
-Correções aplicadas:
+botxray.py - TURBONET XRAY V1.4 (PRO + HÍBRIDO)
+Correções e Integrações:
   - save_config(): escrita atômica via tmpfile + os.replace() + chmod 0o640
   - core_delete_user(): USER_DB atômico via tmpfile + os.replace()
   - restart_xray(): retorna bool, loga stderr em caso de falha
-  - Funções core reportam falha de restart ao usuário
   - nick normalizado para minúsculas em input_handler
   - generate_link(): sem fallback para inbounds[0] — erro explícito se inbound não encontrado
-  - core_create_user(): verificação de duplicidade linha por linha (sem string.contains)
-  - Backup Python gera SHA256 e envia junto ao admin (Refinado para leitura em chunks)
-  - get_ip(): timeout aumentado para 8s
-Integração V1.3:
-  - useradd, userdel, passwd -l, passwd -u nativos no Python (Sincronia Híbrida).
-  - Renovação inteligente de usuários.
+  - Backup Python gera SHA256 em blocos para evitar estouro de memória
+  - useradd, userdel, passwd -l, passwd -u nativos no Python (Sincronia Híbrida SSH).
+  - GUILHOTINA SSH: pkill e chage implementados no block, unblock e renew.
+  - RELATÓRIO DE CONSUMO: Integração nativa lendo as bases do limiterxray.sh.
 """
 
 import os
@@ -50,6 +47,8 @@ except ValueError:
 
 CONFIG_PATH  = "/usr/local/etc/xray/config.json"
 USER_DB      = "/opt/XrayTools/users.db"
+USAGE_DB     = "/opt/XrayTools/usage.db"
+LIMITS_DB    = "/opt/XrayTools/limits.db"
 XRAY_SERVICE = "xray"
 
 logging.basicConfig(
@@ -75,14 +74,7 @@ logger = logging.getLogger(__name__)
 # =============================================================
 
 def reload_xray_user(action: str, nick: str, user_uuid: str, inbound_tag: str = "inbound-turbonet") -> bool:
-    """
-    Adiciona ou remove usuário via API do Xray em tempo real — sem restart.
-    Não derruba conexões de outros clientes.
-    action: "add" ou "remove"
-    Requer inbound api configurado (tag: api) e XRAY_BIN disponível.
-    """
     try:
-        # Descobre a porta da API no config
         data = load_config()
         if not data:
             return False
@@ -143,31 +135,21 @@ def load_config() -> 'Optional[dict]':
 
 
 def save_config(data: dict) -> bool:
-    """
-    Escrita atômica: tmpfile no mesmo diretório do config → os.replace().
-    - tmpfile no mesmo dir evita cross-device link (PrivateTmp=true no systemd
-      cria /tmp isolado, impossibilitando os.replace() de /tmp para /usr/local).
-    - Após replace, restaura dono root:nogroup e permissão 660 — o os.replace()
-      herda dono do tmpfile (botxray:botxray), não do arquivo original.
-    """
     tmp_path = CONFIG_PATH + f".tmp.{os.getpid()}"
     try:
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
         os.replace(tmp_path, CONFIG_PATH)
-        # Restaura permissão e dono corretos após replace
-        # (os.replace herda dono do tmpfile — botxray:botxray — em vez do original)
         os.chmod(CONFIG_PATH, 0o660)
         try:
             import grp
             gid = grp.getgrnam("nogroup").gr_gid
-            os.chown(CONFIG_PATH, 0, gid)  # root:nogroup
+            os.chown(CONFIG_PATH, 0, gid)
         except Exception as e:
             logger.warning("save_config: não foi possível restaurar chown root:nogroup: %s", e)
         return True
     except PermissionError as e:
-        logger.error("save_config: sem permissão — verifique chmod 770 em %s e SupplementaryGroups=nogroup: %s",
-                     os.path.dirname(CONFIG_PATH), e)
+        logger.error("save_config: sem permissão: %s", e)
         return False
     except Exception as e:
         logger.error("Erro ao salvar config: %s", e)
@@ -180,7 +162,6 @@ def save_config(data: dict) -> bool:
 
 
 def get_ip() -> str:
-    """CORREÇÃO: timeout 8s — 3s era muito curto para VPS com alta latência."""
     for url in ("https://icanhazip.com", "https://api.ipify.org"):
         try:
             with urllib.request.urlopen(url, timeout=8) as resp:
@@ -190,15 +171,19 @@ def get_ip() -> str:
     return "127.0.0.1"
 
 
+def bytes_to_human(b: int) -> str:
+    if b >= 1073741824:
+        return f"{b / 1073741824:.2f} GB"
+    elif b >= 1048576:
+        return f"{b / 1048576:.2f} MB"
+    else:
+        return f"{b / 1024:.2f} KB"
+
 # =============================================================
-# GERADOR DE LINKS
+# GERADOR DE LINKS E RELATÓRIOS
 # =============================================================
 
 def generate_link(client_uuid: str, client_email: str) -> str:
-    """
-    CORREÇÃO: sem fallback para inbounds[0] — se inbound-turbonet não existir,
-    retorna erro explícito em vez de gerar link para a porta da API interna.
-    """
     try:
         data = load_config()
         if not data:
@@ -277,15 +262,106 @@ def generate_link(client_uuid: str, client_email: str) -> str:
         return f"Erro Link: {e}"
 
 
+def core_list_usage_text() -> str:
+    """Lê os bancos de dados do limiterxray.sh e formata o consumo."""
+    usages = {}
+    if os.path.exists(USAGE_DB):
+        with open(USAGE_DB, 'r') as f:
+            for line in f:
+                parts = line.strip().split('|')
+                if len(parts) >= 2 and parts[1].isdigit():
+                    usages[parts[0]] = int(parts[1])
+
+    limits = {}
+    if os.path.exists(LIMITS_DB):
+        with open(LIMITS_DB, 'r') as f:
+            for line in f:
+                parts = line.strip().split('|')
+                if len(parts) >= 2 and parts[1].isdigit():
+                    limits[parts[0]] = int(parts[1])
+
+    all_nicks = set(usages.keys()).union(set(limits.keys()))
+    if os.path.exists(USER_DB):
+        with open(USER_DB, 'r') as f:
+            for line in f:
+                parts = line.strip().split('|')
+                if parts[0]:
+                    all_nicks.add(parts[0])
+
+    if not all_nicks:
+        return "Nenhum dado de consumo ou usuário registrado."
+
+    sep = "-" * 60
+    header = (
+        "📊 RELATÓRIO DE CONSUMO DE DADOS\n"
+        + sep + "\n"
+        + f"{'USUÁRIO':<14} | {'USADO':<12} | {'LIMITE':<12} | STATUS\n"
+        + sep + "\n"
+    )
+    rows = []
+    
+    for nick in sorted(all_nicks):
+        use_bytes = usages.get(nick, 0)
+        lim_bytes = limits.get(nick, None)
+        
+        use_str = bytes_to_human(use_bytes)
+        
+        if lim_bytes is None:
+            lim_str = "Sem limite"
+            status = "Livre"
+        else:
+            lim_str = bytes_to_human(lim_bytes)
+            if use_bytes >= lim_bytes:
+                status = "EXCEDIDO"
+            else:
+                pct = int((use_bytes * 100) / lim_bytes)
+                status = f"{pct}%"
+
+        rows.append(f"{nick:<14} | {use_str:<12} | {lim_str:<12} | {status}")
+
+    return header + "\n".join(rows) + "\n" + sep
+
+
+def core_list_users_text() -> str:
+    if not os.path.exists(USER_DB):
+        return "Nenhum usuário cadastrado."
+
+    data         = load_config()
+    locked_users = set()
+    if data:
+        for inbound in data.get("inbounds", []):
+            if inbound.get("tag") == "inbound-turbonet":
+                for c in inbound["settings"]["clients"]:
+                    email = c.get("email", "")
+                    if email.startswith("LOCKED_"):
+                        locked_users.add(email.replace("LOCKED_", "", 1))
+
+    sep = "-" * 65
+    header = (
+        "📋 LISTA DE USUÁRIOS - TURBONET XRAY\n"
+        + sep + "\n"
+        + f"{'NOME':<12} | {'VENCIMENTO':<11} | {'UUID (resumido)':<20} | STATUS\n"
+        + sep + "\n"
+    )
+    rows = []
+    with open(USER_DB, "r") as f:
+        for line in f:
+            parts = line.strip().split("|")
+            if len(parts) >= 3:
+                nick_r, uuid_r, expiry_r = parts[0], parts[1], parts[2]
+                status = "⛔" if nick_r in locked_users else "✅"
+                uuid_short = uuid_r[:8] + "..." + uuid_r[-4:] if len(uuid_r) >= 12 else uuid_r
+                rows.append(f"{nick_r:<12} | {expiry_r:<11} | {uuid_short:<20} | {status}")
+
+    footer = "\n" + sep + f"\nTotal: {len(rows)} usuário(s)"
+    return header + "\n".join(rows) + footer if rows else header + "(vazio)"
+
+
 # =============================================================
-# FUNÇÕES CORE
+# FUNÇÕES CORE DE GERENCIAMENTO (CRIAR, BLOQUEAR, RESTAURAR)
 # =============================================================
 
 def core_create_user(nick: str, days: str) -> 'Tuple[bool, str]':
-    """
-    CORREÇÃO: verificação de duplicidade linha por linha com startswith()
-    em vez de 'nick|' in f.read() — mais robusto com linhas corrompidas sem '|'.
-    """
     if os.path.exists(USER_DB):
         with open(USER_DB, "r") as f:
             if any(line.startswith(f"{nick}|") for line in f):
@@ -314,7 +390,6 @@ def core_create_user(nick: str, days: str) -> 'Tuple[bool, str]':
     if not save_config(data):
         return False, "❌ Falha ao salvar config.json."
 
-    # Adicionado suporte ao padrão do checkuser no arquivo (inclui senha igual ao nick e limite 0)
     with open(USER_DB, "a") as f:
         f.write(f"{nick}|{user_uuid}|{expiry_date}|{nick}|0\n")
 
@@ -323,15 +398,13 @@ def core_create_user(nick: str, days: str) -> 'Tuple[bool, str]':
     chp = subprocess.Popen(["chpasswd"], stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
     chp.communicate(f"{nick}:{nick}".encode('utf-8'))
 
-    # Adiciona usuário via API do Xray em tempo real (sem restart, sem derrubar outros)
     reload_xray_user("add", nick, user_uuid)
-
     link = generate_link(user_uuid, nick)
 
     return True, (
         f"✅ *Usuário Criado!*\n\n"
-        f"👤 Nome:   `{nick}`\n"
-        f"🔑 UUID:   `{user_uuid}`\n"
+        f"👤 Nome:    `{nick}`\n"
+        f"🔑 UUID:    `{user_uuid}`\n"
         f"📅 Expira: `{expiry_date}`\n"
         f"🔐 Senha App: `{nick}`\n\n"
         f"🔗 *Link:*\n`{link}`"
@@ -365,7 +438,6 @@ def core_delete_user(nick: str) -> str:
                 found = True
             else:
                 new_lines.append(line)
-        # CORREÇÃO: escrita atômica — evita truncamento parcial em falha.
         tmp_db = USER_DB + ".tmp"
         with open(tmp_db, "w") as f:
             f.writelines(new_lines)
@@ -374,10 +446,7 @@ def core_delete_user(nick: str) -> str:
     if not found:
         return "❌ Usuário não encontrado no sistema."
 
-    # Integração Híbrida SSH/SOCKS5
     subprocess.run(["userdel", "-r", "-f", nick], check=False, stderr=subprocess.DEVNULL)
-
-    # Remove usuário via API do Xray em tempo real
     reload_xray_user("remove", nick, "")
     reload_xray_user("remove", f"LOCKED_{nick}", "")
     return "✅ Usuário removido do sistema."
@@ -406,15 +475,16 @@ def core_block_user(nick: str) -> str:
     if not save_config(data):
         return "❌ Falha ao salvar config.json."
 
-    # Integração Híbrida SSH/SOCKS5
-    subprocess.run(["passwd", "-l", nick], check=False, stderr=subprocess.DEVNULL)
+    # GUILHOTINA DE SESSÕES SSH (Derruba e trava)
+    subprocess.run(["usermod", "-L", nick], check=False, stderr=subprocess.DEVNULL)
+    subprocess.run(["chage", "-E", "0", nick], check=False, stderr=subprocess.DEVNULL)
+    subprocess.run(["pkill", "-u", nick], check=False, stderr=subprocess.DEVNULL)
 
-    # Remove o usuário com UUID real e adiciona com UUID falso via API (sem restart)
     reload_xray_user("remove", nick, "")
     locked_nick = f"LOCKED_{nick}"
     fake_uuid_str = str(uuid.uuid4())
     reload_xray_user("add", locked_nick, fake_uuid_str)
-    return f"⛔ Usuário `{nick}` foi SUSPENSO."
+    return f"⛔ Usuário `{nick}` foi SUSPENSO e desconectado."
 
 
 def core_unblock_user(nick: str) -> str:
@@ -451,10 +521,11 @@ def core_unblock_user(nick: str) -> str:
     if not save_config(data):
         return "❌ Falha ao salvar config.json."
 
-    # Integração Híbrida SSH/SOCKS5
+    # RESTAURAÇÃO SSH/SOCKS5
+    subprocess.run(["usermod", "-U", nick], check=False, stderr=subprocess.DEVNULL)
+    subprocess.run(["chage", "-E", "-1", nick], check=False, stderr=subprocess.DEVNULL)
     subprocess.run(["passwd", "-u", nick], check=False, stderr=subprocess.DEVNULL)
 
-    # Remove entrada LOCKED_ e adiciona com UUID real via API (sem restart)
     reload_xray_user("remove", f"LOCKED_{nick}", "")
     reload_xray_user("add", nick, real_uuid)
     return f"✅ Usuário `{nick}` REATIVADO com sucesso."
@@ -497,7 +568,9 @@ def core_renew_user(nick: str, days_to_add: str) -> str:
         f.writelines(lines)
     os.replace(tmp_db, USER_DB)
 
-    # Integração Híbrida SSH/SOCKS5
+    # GARANTE DESTRANCAMENTO DO SSH SE RENOVAR
+    subprocess.run(["usermod", "-U", nick], check=False, stderr=subprocess.DEVNULL)
+    subprocess.run(["chage", "-E", "-1", nick], check=False, stderr=subprocess.DEVNULL)
     subprocess.run(["passwd", "-u", nick], check=False, stderr=subprocess.DEVNULL)
 
     data = load_config()
@@ -517,42 +590,6 @@ def core_renew_user(nick: str, days_to_add: str) -> str:
         reload_xray_user("add", nick, real_uuid)
 
     return f"🔄 Usuário `{nick}` RENOVADO com sucesso!\nNova data: {new_expiry}"
-
-
-def core_list_users_text() -> str:
-    if not os.path.exists(USER_DB):
-        return "Nenhum usuário cadastrado."
-
-    data         = load_config()
-    locked_users = set()
-    if data:
-        for inbound in data.get("inbounds", []):
-            if inbound.get("tag") == "inbound-turbonet":
-                for c in inbound["settings"]["clients"]:
-                    email = c.get("email", "")
-                    if email.startswith("LOCKED_"):
-                        locked_users.add(email.replace("LOCKED_", "", 1))
-
-    sep = "-" * 65
-    header = (
-        "📋 LISTA DE USUÁRIOS - TURBONET XRAY\n"
-        + sep + "\n"
-        + f"{'NOME':<12} | {'VENCIMENTO':<11} | {'UUID (resumido)':<20} | STATUS\n"
-        + sep + "\n"
-    )
-    rows = []
-    with open(USER_DB, "r") as f:
-        for line in f:
-            parts = line.strip().split("|")
-            if len(parts) >= 3:
-                nick_r, uuid_r, expiry_r = parts[0], parts[1], parts[2]
-                status = "⛔" if nick_r in locked_users else "✅"
-                # UUID truncado — não expõe credencial completa no chat
-                uuid_short = uuid_r[:8] + "..." + uuid_r[-4:] if len(uuid_r) >= 12 else uuid_r
-                rows.append(f"{nick_r:<12} | {expiry_r:<11} | {uuid_short:<20} | {status}")
-
-    footer = "\n" + sep + f"\nTotal: {len(rows)} usuário(s)"
-    return header + "\n".join(rows) + footer if rows else header + "(vazio)"
 
 
 # =============================================================
@@ -578,7 +615,10 @@ def build_menu() -> InlineKeyboardMarkup:
             InlineKeyboardButton("📋 LISTAR (TXT)", callback_data="list_users"),
         ],
         [
-            InlineKeyboardButton("📥 BACKUP",        callback_data="backup_start"),
+            InlineKeyboardButton("📊 VER CONSUMO", callback_data="usage_list"),
+            InlineKeyboardButton("📥 BACKUP",      callback_data="backup_start"),
+        ],
+        [
             InlineKeyboardButton("❌ SAIR", callback_data="cancel"),
         ],
     ]
@@ -590,7 +630,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     context.user_data.clear()
     await update.message.reply_text(
-        "🐉 *PAINEL TURBONET XRAY V1.3 (PRO)*\n_Integração Híbrida SSH Ativa_",
+        "🐉 *PAINEL TURBONET XRAY V1.4 (PRO)*\n_Integração Híbrida SSH Ativa_",
         reply_markup=build_menu(),
         parse_mode="Markdown",
     )
@@ -661,6 +701,27 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return SELECTING_ACTION
 
+    if query.data == "usage_list":
+        report = core_list_usage_text()
+        f = io.BytesIO(report.encode("utf-8"))
+        f.name = "consumo.txt"
+        close_btn = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🗑 Fechar Relatório", callback_data="close_file")]]
+        )
+        await context.bot.send_document(
+            chat_id=update.effective_chat.id,
+            document=f,
+            caption="📊 *Relatório de Consumo de Dados gerado*",
+            parse_mode="Markdown",
+            reply_markup=close_btn,
+        )
+        await query.edit_message_text(
+            "✅ *Relatório de consumo enviado!*",
+            parse_mode="Markdown",
+            reply_markup=build_menu(),
+        )
+        return SELECTING_ACTION
+
     if query.data == "backup_start":
         await query.edit_message_text("📦 Gerando Backup...", parse_mode="Markdown")
 
@@ -696,7 +757,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             shutil.rmtree(tmpdir, ignore_errors=True)
 
         if os.path.exists(bkp_file) and os.path.getsize(bkp_file) > 0:
-            # CORREÇÃO: SHA256 lendo o arquivo em blocos
             sha256_hash = hashlib.sha256()
             with open(bkp_file, "rb") as f_hash:
                 for byte_block in iter(lambda: f_hash.read(4096), b""):
@@ -763,9 +823,6 @@ async def input_handler(
     if not update.message or not update.message.text:
         return SELECTING_ACTION
 
-    # CORREÇÃO: normaliza para minúsculas — usuários criados pelos scripts Shell
-    # são gravados em minúsculas; sem normalização, block/delete/unblock falhavam
-    # quando o operador digitava em maiúsculas pelo bot.
     text = update.message.text.strip().split()[0].lower()
 
     if mode == "create_nick":
@@ -820,7 +877,6 @@ async def input_handler(
         await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=build_menu())
         return SELECTING_ACTION
 
-    # Fallback — modo desconhecido, retorna ao menu sem travar
     logger.warning("input_handler: modo desconhecido '%s'", mode)
     await update.message.reply_text("❌ Operação inválida.", reply_markup=build_menu())
     return SELECTING_ACTION
@@ -834,7 +890,6 @@ async def h_block(u, c):       return await input_handler(u, c, "block")
 async def h_unblock(u, c):     return await input_handler(u, c, "unblock")
 async def h_renew_nick(u, c):  return await input_handler(u, c, "renew_nick")
 async def h_renew_days(u, c):  return await input_handler(u, c, "renew_days")
-
 
 async def cancel_op(u, c):
     await u.message.reply_text("Cancelado.", reply_markup=build_menu())
@@ -888,7 +943,7 @@ def main():
         allow_reentry=True,
     )
     app.add_handler(conv)
-    logger.info("TURBONET XRAY Bot V1.3 iniciado. Admin ID: %d", ADMIN_ID)
+    logger.info("TURBONET XRAY Bot V1.4 iniciado. Admin ID: %d", ADMIN_ID)
     app.run_polling()
 
 
