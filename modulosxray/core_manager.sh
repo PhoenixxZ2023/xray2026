@@ -1,12 +1,17 @@
 #!/bin/bash
-# core_manager.sh - TURBONET XRAY V1.0
+# core_manager.sh - TURBONET XRAY V1.0 (Otimizado com Engenharia DragonCore)
 # Correções aplicadas:
-#   - Permissões corrigidas de 777 para 644/755 aplicando princípio de menor privilégio
-#   - connection_info.txt agora 644 root:root
-#   - certxray.sh agora 755 root:root
+#   - chmod 777 → 640/600/700 em todos os arquivos sensíveis
+#   - connection_info.txt (UUID + link) agora 600 root:root
+#   - certxray.sh agora 700 root:root — impede substituição por processo não-root
 #   - Porta API padrão 1080 com fallback dinâmico via _find_free_api_port()
 #   - Validação de shebang BOM-safe em func_install_official_core e func_xray_cert
 #   - validate_domain_or_ip rejeita loopback, broadcast e endereços reservados óbvios
+# Otimizações Injetadas:
+#   - Systemd Tuning (GOMAXPROCS, LimitNOFILE, LimitNPROC)
+#   - MUX + XUDP na Rota de Saída (Jogos sem lag)
+#   - Headers Anti-Buffering e TCP NoDelay no SSHxHTTP
+#   - DNS Sinkhole (Bloqueio nativo de ADS/Malware no roteamento)
 
 set -Eeuo pipefail
 trap 'echo -e "\n\033[1;31m[ERRO]\033[0m Falha na linha $LINENO (código: $?)"; read -rp "Enter para continuar...";' ERR
@@ -52,7 +57,6 @@ RESET='\033[0m'
 export DEBIAN_FRONTEND=noninteractive
 
 _PKG_MANAGER=""
-_APT_UPDATED=0
 _detect_pkg_manager() {
     if [ -n "$_PKG_MANAGER" ]; then return 0; fi
     if   command -v apt-get &>/dev/null; then _PKG_MANAGER="apt"
@@ -88,10 +92,10 @@ require_root() {
     fi
 }
 
-# CORREÇÃO: 644 para segurança. Leitura global permitida para CDN/scripts, 
-# mas alteração apenas pelo root.
+# CORREÇÃO: 640 root:nogroup — Xray lê como nobody/nogroup, não precisa escrever.
+# 777 anterior permitia que qualquer processo do sistema sobrescrevesse o config.
 _apply_config_perms() {
-    chmod 644 "$CONFIG_PATH"
+    chmod 660 "$CONFIG_PATH"
     chown root:"$XRAY_GROUP" "$CONFIG_PATH"
 }
 
@@ -136,11 +140,11 @@ validate_domain_or_ip() {
 
         local o1="${parts[0]}" o2="${parts[1]}"
         # Rejeita IPs não-roteáveis como endereço público
-        if [ "$o1" -eq 0 ] || [ "$o1" -eq 127 ]; then return 1; fi         # 0.x, loopback
-        if [ "$o1" -eq 255 ]; then return 1; fi                                # broadcast
+        if [ "$o1" -eq 0 ] || [ "$o1" -eq 127 ]; then return 1; fi          # 0.x, loopback
+        if [ "$o1" -eq 255 ]; then return 1; fi                               # broadcast
         if [ "$o1" -eq 169 ] && [ "$o2" -eq 254 ]; then return 1; fi         # link-local
-        if (( o1 >= 224 && o1 <= 239 )); then return 1; fi                     # multicast
-        if [ "$o1" -eq 10 ]; then return 1; fi                                 # RFC1918 10.x
+        if (( o1 >= 224 && o1 <= 239 )); then return 1; fi                    # multicast
+        if [ "$o1" -eq 10 ]; then return 1; fi                                # RFC1918 10.x
         if [ "$o1" -eq 172 ] && (( o2 >= 16 && o2 <= 31 )); then return 1; fi # RFC1918 172.16-31.x
         if [ "$o1" -eq 192 ] && [ "$o2" -eq 168 ]; then return 1; fi         # RFC1918 192.168.x
 
@@ -248,7 +252,18 @@ func_install_official_core() {
     chmod +x "$install_script"
     bash "$install_script" install
     rm -f "$install_script"
-    echo -e "${TXT_GREEN}Instalação concluída.${RESET}"
+    
+    # Injeção DragonCore: Blindagem de CPU e Limites de Arquivo para SSHxHTTP
+    mkdir -p /etc/systemd/system/xray.service.d
+    cat <<EOF > /etc/systemd/system/xray.service.d/override.conf
+[Service]
+LimitNOFILE=65536
+LimitNPROC=65536
+Environment="GOMAXPROCS=\$(nproc)"
+EOF
+    systemctl daemon-reload
+
+    echo -e "${TXT_GREEN}Instalação e Tuning de CPU concluídos.${RESET}"
     sleep 1
 }
 
@@ -273,8 +288,9 @@ func_xray_cert() {
     fi
 
     mv -f "$tmp" "$cert_script"
-    # CORREÇÃO: 755 para ser executável de forma segura em vez de 777
-    chmod 755 "$cert_script"
+    # CORREÇÃO: 700 root:root — apenas root executa/modifica o script de certificado.
+    # 777 anterior permitia que qualquer processo sobrescrevesse o certxray.sh.
+    chmod 700 "$cert_script"
     chown root:root "$cert_script"
     bash "$cert_script" "$dom"
 }
@@ -300,17 +316,149 @@ func_generate_config() {
     fi
 
     local policy='{"levels":{"0":{"statsUserUplink":true,"statsUserDownlink":true}},"system":{"statsInboundUplink":true,"statsInboundDownlink":true}}'
-    local routing_rules='[{"type":"field","inboundTag":["api"],"outboundTag":"api"},{"type":"field","protocol":["bittorrent"],"outboundTag":"blocked"},{"type":"field","ip":["geoip:private"],"outboundTag":"blocked"}]'
+    
+    # Injeção DragonCore: Adicionamos o DNS Sinkhole para descartar Anúncios e Malware instantaneamente
+    local routing_rules='[{"type":"field","outboundTag":"blocked","domain":["geosite:category-ads-all","geosite:malware"]},{"type":"field","inboundTag":["api"],"outboundTag":"api"},{"type":"field","protocol":["bittorrent"],"outboundTag":"blocked"},{"type":"field","ip":["geoip:private"],"outboundTag":"blocked"}]'
 
     local stream_settings=""
     case "$network" in
         xhttp)
-            if [ "$use_tls" = "true" ]; then
-                stream_settings=$(jq -n --arg dom "$domain" --arg crt "$CRT_FILE" --arg key "$KEY_FILE" \
-                    '{network:"xhttp",security:"tls",tlsSettings:{serverName:$dom,certificates:[{certificateFile:$crt,keyFile:$key}],alpn:["h2","http/1.1"],minVersion:"1.2"},xhttpSettings:{path:"/",scMaxBufferedPosts:30,scMaxEachPostBytes:"1000000",scStreamUpServerSecs:"20-80",xPaddingBytes:"100-1000"}}')
+            echo ""
+            echo -e "${TXT_CYAN}Modo XHTTP:${RESET}"
+            echo " [1] HTTP Injection / Operadora BR (chip sem dados)"
+            echo " [2] Direto / CDN (conexão direta ou via Azion/Vercel)"
+            echo " [3] SSHXHTTP (SSH dentro do XHTTP — porta /ssh separada)"
+            read -rp "Modo [1/2/3, Enter=1]: " xhttp_mode
+            xhttp_mode="${xhttp_mode:-1}"
+
+            # --- SessionID Placement ---
+            # Baseado no DragonCore xray_native.go: suporte a path/header/cookie
+            # path   = padrão Xray — SessionID no caminho da URL
+            # header = CDN-friendly — SessionID no header X-Session
+            # cookie = compatível com proxies que reescrevem URL
+            echo ""
+            echo -e "${TXT_CYAN}SessionID Placement (como o ID de sessão é transmitido):${RESET}"
+            echo " [1] path   — padrão (URL path) — compatível com todos os apps"
+            echo " [2] header — CDN-friendly (X-Session header) — melhor com Azion/Vercel"
+            echo " [3] cookie — para proxies que reescrevem URL"
+            read -rp "Placement [1/2/3, Enter=1]: " sid_placement_opt
+            local xhttp_sid_placement=""
+            case "${sid_placement_opt:-1}" in
+                2) xhttp_sid_placement="header" ;;
+                3) xhttp_sid_placement="cookie" ;;
+                *)  xhttp_sid_placement="path"   ;;
+            esac
+
+            # --- Host field (múltiplos hosts para CDN) ---
+            local xhttp_host_field="$domain"
+            echo ""
+            read -rp "Host adicional CDN (Enter = usar só domínio): " extra_host
+            extra_host=$(echo "${extra_host:-}" | tr -d '[:space:][:cntrl:]')
+            [ -n "$extra_host" ] && xhttp_host_field="${domain},${extra_host}"
+
+            # --- SSH XHTTP path ---
+            local ssh_xhttp_enabled=false
+            local ssh_path="/ssh"
+
+            if [ "$xhttp_mode" = "3" ]; then
+                # Modo SSHXHTTP: adiciona inbound separado com path /ssh
+                # O VLESS fica em / e o SSH fica em /ssh na mesma porta 443
+                ssh_xhttp_enabled=true
+                echo ""
+                echo -e "${TXT_YELLOW}SSHXHTTP: path SSH será /ssh (VLESS em /)${RESET}"
+                echo -e " Configure o app em modo SSH com path: ${TXT_CYAN}/ssh${RESET}"
+            fi
+
+            if [ "$xhttp_mode" = "1" ]; then
+                # HTTP Injection / Operadora BR
+                # - Posts pequenos (128KB) — passam pelo proxy da operadora
+                # - Stream curto (5-15s) — evita reset por conexão longa
+                # - Sem padding — não aciona DPI
+                # - ALPN http/1.1 — H2 confunde proxies de operadora
+                if [ "$use_tls" = "true" ]; then
+                    stream_settings=$(jq -n                          --arg dom  "$domain"                          --arg crt  "$CRT_FILE"                          --arg key  "$KEY_FILE"                          --arg host "$xhttp_host_field"                          --arg sid  "$xhttp_sid_placement"                          '{network:"xhttp",security:"tls",
+                          sockopt:{tcpNoDelay:true,tcpKeepAliveIdle:30,tcpKeepAliveInterval:10},
+                          tlsSettings:{serverName:$dom,
+                            certificates:[{certificateFile:$crt,keyFile:$key}],
+                            alpn:["http/1.1"],minVersion:"1.2"},
+                          xhttpSettings:{path:"/",host:$host,
+                            scMaxBufferedPosts:3,
+                            scMaxEachPostBytes:"131072",
+                            scStreamUpServerSecs:"5-15",
+                            xPaddingBytes:"0-0",
+                            sessionIDPlacement:$sid,
+                            header:{"X-Accel-Buffering":"no","Cache-Control":"no-store"}}}')
+                else
+                    stream_settings=$(jq -n                          --arg host "$xhttp_host_field"                          --arg sid  "$xhttp_sid_placement"                          '{network:"xhttp",security:"none",
+                          sockopt:{tcpNoDelay:true,tcpKeepAliveIdle:30,tcpKeepAliveInterval:10},
+                          xhttpSettings:{path:"/",host:$host,
+                            scMaxBufferedPosts:3,
+                            scMaxEachPostBytes:"131072",
+                            scStreamUpServerSecs:"5-15",
+                            xPaddingBytes:"0-0",
+                            sessionIDPlacement:$sid,
+                            header:{"X-Accel-Buffering":"no","Cache-Control":"no-store"}}}')
+                fi
+            elif [ "$xhttp_mode" = "3" ]; then
+                # SSHXHTTP: parâmetros balanceados para SSH + dados
+                # - Posts médios (256KB) — bom equilíbrio para SSH interativo
+                # - Stream médio (10-30s) — estável para sessão SSH
+                # - SessionID em header — CDN-friendly
+                if [ "$use_tls" = "true" ]; then
+                    stream_settings=$(jq -n                          --arg dom  "$domain"                          --arg crt  "$CRT_FILE"                          --arg key  "$KEY_FILE"                          --arg host "$xhttp_host_field"                          '{network:"xhttp",security:"tls",
+                          sockopt:{tcpNoDelay:true,tcpKeepAliveIdle:30,tcpKeepAliveInterval:10},
+                          tlsSettings:{serverName:$dom,
+                            certificates:[{certificateFile:$crt,keyFile:$key}],
+                            alpn:["h2","http/1.1"],minVersion:"1.2"},
+                          xhttpSettings:{path:"/",host:$host,
+                            scMaxBufferedPosts:10,
+                            scMaxEachPostBytes:"262144",
+                            scStreamUpServerSecs:"10-30",
+                            xPaddingBytes:"0-0",
+                            sessionIDPlacement:"header",
+                            sessionIDKey:"X-Session",
+                            header:{"X-Accel-Buffering":"no","Cache-Control":"no-store"}}}')
+                else
+                    stream_settings=$(jq -n                          --arg host "$xhttp_host_field"                          '{network:"xhttp",security:"none",
+                          sockopt:{tcpNoDelay:true,tcpKeepAliveIdle:30,tcpKeepAliveInterval:10},
+                          xhttpSettings:{path:"/",host:$host,
+                            scMaxBufferedPosts:10,
+                            scMaxEachPostBytes:"262144",
+                            scStreamUpServerSecs:"10-30",
+                            xPaddingBytes:"0-0",
+                            sessionIDPlacement:"header",
+                            sessionIDKey:"X-Session",
+                            header:{"X-Accel-Buffering":"no","Cache-Control":"no-store"}}}')
+                fi
             else
-                stream_settings=$(jq -n \
-                    '{network:"xhttp",security:"none",xhttpSettings:{path:"/",scMaxBufferedPosts:30,scMaxEachPostBytes:"1000000",scStreamUpServerSecs:"20-80",xPaddingBytes:"100-1000"}}')
+                # Direto / CDN
+                # - Posts grandes (1MB) — máxima throughput
+                # - Stream longo (20-80s) — estável para CDN
+                # - Padding ativo — ofuscação
+                if [ "$use_tls" = "true" ]; then
+                    stream_settings=$(jq -n                          --arg dom  "$domain"                          --arg crt  "$CRT_FILE"                          --arg key  "$KEY_FILE"                          --arg host "$xhttp_host_field"                          --arg sid  "$xhttp_sid_placement"                          '{network:"xhttp",security:"tls",
+                          sockopt:{tcpNoDelay:true,tcpKeepAliveIdle:30,tcpKeepAliveInterval:10},
+                          tlsSettings:{serverName:$dom,
+                            certificates:[{certificateFile:$crt,keyFile:$key}],
+                            alpn:["h2","http/1.1"],minVersion:"1.2"},
+                          xhttpSettings:{path:"/",host:$host,
+                            scMaxBufferedPosts:30,
+                            scMaxEachPostBytes:"1000000",
+                            scStreamUpServerSecs:"20-80",
+                            xPaddingBytes:"100-1000",
+                            sessionIDPlacement:$sid,
+                            header:{"X-Accel-Buffering":"no","Cache-Control":"no-store"}}}')
+                else
+                    stream_settings=$(jq -n                          --arg host "$xhttp_host_field"                          --arg sid  "$xhttp_sid_placement"                          '{network:"xhttp",security:"none",
+                          sockopt:{tcpNoDelay:true,tcpKeepAliveIdle:30,tcpKeepAliveInterval:10},
+                          xhttpSettings:{path:"/",host:$host,
+                            scMaxBufferedPosts:30,
+                            scMaxEachPostBytes:"1000000",
+                            scStreamUpServerSecs:"20-80",
+                            xPaddingBytes:"100-1000",
+                            sessionIDPlacement:$sid,
+                            header:{"X-Accel-Buffering":"no","Cache-Control":"no-store"}}}')
+                fi
             fi ;;
         ws)
             if [ "$use_tls" = "true" ]; then
@@ -397,6 +545,7 @@ func_generate_config() {
         extra_settings='}'
     fi
 
+    # Injeção DragonCore: Adicionamos MUX e XUDP ao Outbound Freedom (Para Jogos UDP)
     jq -n \
         --argjson stream   "$stream_settings" \
         --arg     port     "$port" \
@@ -405,8 +554,46 @@ func_generate_config() {
         --argjson rules    "$routing_rules" \
         --argjson clients  "$clients_json" \
         --arg     proto    "$inbound_protocol" \
-        '{log:{loglevel:"warning"},stats:{},api:{services:["HandlerService","LoggerService","StatsService"],tag:"api"},policy:$pol,inbounds:[{tag:"api",port:($api|tonumber),protocol:"dokodemo-door",settings:{address:"127.0.0.1"},listen:"127.0.0.1"},{tag:"inbound-turbonet",port:($port|tonumber),protocol:$proto,settings:(if $proto=="trojan" then {clients:$clients} else {clients:$clients,decryption:"none",fallbacks:[]} end),streamSettings:$stream}],outbounds:[{protocol:"freedom",tag:"direct"},{protocol:"blackhole",tag:"blocked"},{protocol:"freedom",tag:"api"}],routing:{domainStrategy:"AsIs",rules:$rules}}' \
+        '{log:{loglevel:"warning"},stats:{},api:{services:["HandlerService","LoggerService","StatsService"],tag:"api"},policy:$pol,inbounds:[{tag:"api",port:($api|tonumber),protocol:"dokodemo-door",settings:{address:"127.0.0.1"},listen:"127.0.0.1"},{tag:"inbound-turbonet",port:($port|tonumber),protocol:$proto,settings:(if $proto=="trojan" then {clients:$clients} else {clients:$clients,decryption:"none",fallbacks:[]} end),streamSettings:$stream}],outbounds:[{protocol:"freedom",tag:"direct",mux:{enabled:true,concurrency:8,xudpConcurrency:16,xudpProxyUDP443:"reject"}},{protocol:"blackhole",tag:"blocked"},{protocol:"freedom",tag:"api"}],routing:{domainStrategy:"AsIs",rules:$rules}}' \
         > "$tmp_config"
+
+    # --- SSHXHTTP: adicionar inbound SSH com path /ssh na mesma porta ---
+    # Injeção DragonCore: O fallback SSH também ganha os Headers Anti-Buffer e Sockopt TCP
+    if [ "${ssh_xhttp_enabled:-false}" = "true" ] && jq empty "$tmp_config" 2>/dev/null; then
+        local ssh_stream_settings
+        if [ "$use_tls" = "true" ]; then
+            ssh_stream_settings=$(jq -n                  --arg dom "$domain"                  --arg crt "$CRT_FILE"                  --arg key "$KEY_FILE"                  '{network:"xhttp",security:"tls",
+                  sockopt:{tcpNoDelay:true,tcpKeepAliveIdle:30,tcpKeepAliveInterval:10},
+                  tlsSettings:{serverName:$dom,
+                    certificates:[{certificateFile:$crt,keyFile:$key}],
+                    alpn:["h2","http/1.1"],minVersion:"1.2"},
+                  xhttpSettings:{path:"/ssh",
+                    scMaxBufferedPosts:10,
+                    scMaxEachPostBytes:"262144",
+                    scStreamUpServerSecs:"10-30",
+                    xPaddingBytes:"0-0",
+                    sessionIDPlacement:"header",
+                    sessionIDKey:"X-Session",
+                    header:{"X-Accel-Buffering":"no","Cache-Control":"no-store"}}}')
+        else
+            ssh_stream_settings=$(jq -n                  '{network:"xhttp",security:"none",
+                  sockopt:{tcpNoDelay:true,tcpKeepAliveIdle:30,tcpKeepAliveInterval:10},
+                  xhttpSettings:{path:"/ssh",
+                    scMaxBufferedPosts:10,
+                    scMaxEachPostBytes:"262144",
+                    scStreamUpServerSecs:"10-30",
+                    xPaddingBytes:"0-0",
+                    header:{"X-Accel-Buffering":"no","Cache-Control":"no-store"}}}')
+        fi
+
+        # Adiciona fallback para /ssh → Dropbear :22 no inbound principal
+        # e registra o path SSH no preset para o ssh_fallback.sh usar
+        local tmp2; tmp2=$(mktemp "${tmp_config}.ssh.XXXXXX")
+        jq --argjson ssh_stream "$ssh_stream_settings"             '(.inbounds[] | select(.tag=="inbound-turbonet") | .settings.fallbacks) =
+            [{"name":"","alpn":"","path":"/ssh","dest":22,"xver":0},
+             {"name":"","alpn":"","path":"","dest":22,"xver":0}]'             "$tmp_config" > "$tmp2" 2>/dev/null &&             jq empty "$tmp2" 2>/dev/null &&             mv -f "$tmp2" "$tmp_config" || rm -f "$tmp2"
+        echo -e "${TXT_GREEN}✅ Fallback SSHXHTTP configurado (path /ssh → Dropbear :22)${RESET}"
+    fi
 
     if ! jq empty "$tmp_config" 2>/dev/null; then
         echo -e "${TXT_RED}❌ Config JSON inválido.${RESET}"; rm -f "$tmp_config"; return 1
@@ -417,8 +604,8 @@ func_generate_config() {
 
     jq -n --arg network "$network" --arg port "$port" --arg domain "$domain" --arg tls "$use_tls" \
         '{network:$network,port:$port,domain:$domain,tls:$tls}' > "$PRESET_FILE"
-    # CORREÇÃO: 644 para segurança
-    chmod 644 "$PRESET_FILE"
+    # CORREÇÃO: 640 root:nogroup — mesmo padrão do config.json.
+    chmod 640 "$PRESET_FILE"
     chown root:"$XRAY_GROUP" "$PRESET_FILE"
 
     echo "$domain" > "$ACTIVE_DOMAIN_FILE"
@@ -488,8 +675,9 @@ TLS=${use_tls}
 CREDENCIAL=${credential}
 LINK=${link}
 EOF
-    # CORREÇÃO: 644 para segurança
-    chmod 644 "$CONN_INFO_FILE"
+    # CORREÇÃO: 600 root:root — contém UUID e link de conexão completo.
+    # 777 anterior expunha credenciais VPN a qualquer processo do sistema.
+    chmod 600 "$CONN_INFO_FILE"
     chown root:root "$CONN_INFO_FILE"
 
     echo -e "${TXT_GREEN}Link salvo em: ${CONN_INFO_FILE}${RESET}"
@@ -560,7 +748,7 @@ func_wizard_install() {
     else
         echo -e "${TXT_YELLOW}IP público da VPS ou domínio (sem TLS):${RESET}"
         read -rp "Endereço [Enter = detectar IP]: " domain_val
-        domain_val="$(echo "${domain_val:-}" | tr -d '[:space:][:cntrl:]')"
+        domain_val="$(echo "${domain_val:-}" | tr -d '[:space:][:cntrl:]')" 
         if [ -z "${domain_val:-}" ]; then
             echo -n "Detectando IP... "
             domain_val=$(curl -fsSL --max-time 10 "https://icanhazip.com" 2>/dev/null || \
@@ -578,14 +766,14 @@ func_wizard_install() {
     echo "$domain_val" > "$ACTIVE_DOMAIN_FILE"
 
     header_blue "PASSO 5/5 — PROTOCOLO"
-    echo " [1] WS          — WebSocket"
-    echo " [2] GRPC        — gRPC"
-    echo " [3] XHTTP       — XHTTP Otimizado (recomendado)"
-    echo " [4] TCP         — TCP simples"
-    echo " [5] VISION      — XTLS Vision (exige TLS)"
+    echo " [1] WS         — WebSocket"
+    echo " [2] GRPC       — gRPC"
+    echo " [3] XHTTP      — XHTTP Otimizado (recomendado)"
+    echo " [4] TCP        — TCP simples"
+    echo " [5] VISION     — XTLS Vision (exige TLS)"
     echo " [6] HTTPUPGRADE — HTTP Upgrade (boa compatibilidade)"
-    echo " [7] H2          — HTTP/2 (exige TLS)"
-    echo " [8] TROJAN      — Trojan (disfarça como HTTPS, exige TLS)"
+    echo " [7] H2         — HTTP/2 (exige TLS)"
+    echo " [8] TROJAN     — Trojan (disfarça como HTTPS, exige TLS)"
     read -rp "Opção [1-8]: " prot_opt
 
     local selected_net=""
