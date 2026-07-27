@@ -2,14 +2,12 @@
 # ssh_fallback.sh - TURBONET XRAY V1.0
 # SSH completo integrado ao Xray XHTTP:
 #   - Dropbear na porta 22 (loopback) — acesso via Xray fallback porta 443
-#   - Proxy porta 8080: TCP Direto (SSH over HTTP)
-#   - Proxy porta 80: WebSocket SSH (ws+ssh) - Ideal para CDN
-#   - Proxy porta 1080: SOCKS5
+#   - Proxy Unificado Porta 80: TCP Direto E WebSocket na mesma porta.
 #   - Um cadastro = acesso XHTTP/VLESS + SSH simultaneamente
 # Correções Aplicadas:
-#   - Prevenção contra SOCKS5 Open Proxy (autenticação PAM obrigatória)
-#   - Detecção dinâmica de interface de rede para o Dante (evita quebras fora de eth0)
-#   - WebSocket movido para porta 80 nativa / Proxy TCP movido para 8080
+#   - Proxy Unificado em Python (TCP + WS) detecta automaticamente o protocolo.
+#   - Remoção do SOCKS5 (Dante) para blindar a VPS contra scanners de proxy aberto.
+#   - Roteamento inteligente na porta 80 ideal para Azion e Vercel.
 
 set -Eeuo pipefail
 trap 'echo -e "\n\033[1;31m[ERRO]\033[0m Falha na linha $LINENO"; sleep 2' ERR
@@ -87,8 +85,8 @@ _xray_fallback_status() {
 }
 
 _proxy80_status() {
-    systemctl is-active --quiet turbonet-wssh 2>/dev/null && \
-        echo -e "${TXT_GREEN}ATIVO (WS porta 80)${RESET}" || \
+    systemctl is-active --quiet turbonet-proxy80 2>/dev/null && \
+        echo -e "${TXT_GREEN}ATIVO (TCP+WS porta 80)${RESET}" || \
         echo -e "${TXT_RED}INATIVO${RESET}"
 }
 
@@ -207,239 +205,206 @@ _remove_xray_fallback() {
     fi
 }
 
-# --- PROXY PORTA 80 E EXTRAS ---
+# --- PROXY UNIFICADO PORTA 80 ---
 _setup_proxy80() {
-    echo -e "${TXT_YELLOW}Configurando proxies SSH (TCP, WebSocket e SOCKS5)...${RESET}"
-    echo ""
-    echo -e "${TXT_CYAN}Tipos de proxy disponíveis:${RESET}"
-    echo " [1] TCP direto (SSH over HTTP) — Porta 8080"
-    echo " [2] SOCKS5 (via dante) — Porta 1080"
-    echo " [3] WebSocket SSH (ws+ssh) — Porta 80 (Recomendado para CDN)"
-    echo " [4] Todos os modos (recomendado)"
-    read -rp "Opção [1-4, Enter=4]: " proxy_opt
-    proxy_opt="${proxy_opt:-4}"
+    echo -e "${TXT_YELLOW}Configurando proxy SSH na porta 80 (TCP + WebSocket)...${RESET}"
 
-    # Verificar porta 80 e 8080
-    if ss -tlnp 2>/dev/null | grep -qE ":(80|8080) "; then
-        echo -e "${TXT_YELLOW}⚠  Portas de proxy em uso. Liberando...${RESET}"
-        systemctl stop nginx  2>/dev/null || true
+    # Verificar porta 80
+    if ss -tlnp 2>/dev/null | grep -q ":80 "; then
+        echo -e "${TXT_YELLOW}⚠  Porta 80 em uso. Liberando...${RESET}"
+        systemctl stop nginx   2>/dev/null || true
         systemctl stop apache2 2>/dev/null || true
         fuser -k 80/tcp 2>/dev/null || true
-        fuser -k 8080/tcp 2>/dev/null || true
         sleep 1
     fi
 
-    ensure_pkg socat socat
+    ensure_pkg python3 python3
 
-    # --- MODO 1: TCP direto porta 8080 → SSH 22 ---
-    if [ "$proxy_opt" = "1" ] || [ "$proxy_opt" = "4" ]; then
-        cat > /etc/systemd/system/turbonet-proxy80.service << 'P80EOF'
-[Unit]
-Description=TURBONET XRAY SSH Proxy TCP porta 8080
-After=network.target turbonet-dropbear.service
-
-[Service]
-Type=simple
-ExecStart=/usr/bin/socat TCP-LISTEN:8080,fork,reuseaddr TCP:127.0.0.1:22
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-P80EOF
-        systemctl daemon-reload
-        systemctl enable  turbonet-proxy80 >/dev/null 2>&1
-        systemctl restart turbonet-proxy80 >/dev/null 2>&1
-    fi
-
-    # --- MODO 2: SOCKS5 via dante ---
-    if [ "$proxy_opt" = "2" ] || [ "$proxy_opt" = "4" ]; then
-        ensure_pkg sockd dante-server 2>/dev/null || ensure_pkg sockd danted 2>/dev/null || true
-        if command -v sockd &>/dev/null || command -v danted &>/dev/null; then
-            local dante_bin
-            dante_bin=$(command -v sockd 2>/dev/null || command -v danted 2>/dev/null)
-            
-            # Detectar interface principal dinamicamente
-            local EXT_IF
-            EXT_IF=$(ip route get 8.8.8.8 | awk -- '{printf $5}')
-
-            cat > /etc/danted.conf << DANTEEOF
-logoutput: /tmp/dante.log
-internal: 0.0.0.0 port = 1080
-external: ${EXT_IF}
-clientmethod: none
-socksmethod: username
-user.privileged: root
-user.notprivileged: nobody
-
-client pass {
-    from: 0.0.0.0/0 to: 0.0.0.0/0
-    log: error
-}
-socks pass {
-    from: 0.0.0.0/0 to: 0.0.0.0/0
-    protocol: tcp udp
-    socksmethod: username
-    log: error
-}
-DANTEEOF
-
-            cat > /etc/systemd/system/turbonet-socks5.service << SOCKS5EOF
-[Unit]
-Description=TURBONET XRAY SOCKS5 Proxy porta 1080
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=${dante_bin} -f /etc/danted.conf -N 1
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-SOCKS5EOF
-            systemctl daemon-reload
-            systemctl enable  turbonet-socks5 >/dev/null 2>&1
-            systemctl restart turbonet-socks5 >/dev/null 2>&1
-            echo -e "${TXT_GREEN}✅ SOCKS5 ativo na porta 1080 (Protegido com Senha)${RESET}"
-        else
-            echo -e "${TXT_YELLOW}⚠  dante não disponível — pulando SOCKS5.${RESET}"
-        fi
-    fi
-
-    # --- MODO 3: WebSocket SSH (porta 80) ---
-    if [ "$proxy_opt" = "3" ] || [ "$proxy_opt" = "4" ]; then
-        cat > /usr/local/bin/turbonet-wssh.py << 'WSEOF'
+    # Servidor Python unificado: detecta WS vs TCP raw na mesma porta 80
+    cat > /usr/local/bin/turbonet-proxy80.py << 'PYEOF'
 #!/usr/bin/env python3
-# TURBONET XRAY - WebSocket SSH Bridge
-# Escuta na porta 80, faz bridge para SSH 127.0.0.1:22
-import asyncio, socket, sys
-WS_PORT  = 80
-SSH_HOST = '127.0.0.1'
-SSH_PORT = 22
+import asyncio, base64, hashlib, os
 
-HANDSHAKE = (
-    b'HTTP/1.1 101 Switching Protocols\r\n'
-    b'Upgrade: websocket\r\n'
-    b'Connection: Upgrade\r\n'
-    b'Sec-WebSocket-Accept: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n')
+LISTEN_PORT = 80
+SSH_HOST    = "127.0.0.1"
+SSH_PORT    = 22
+WS_MAGIC    = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
-async def pipe(reader, writer):
+async def pipe(src_r, dst_w):
     try:
         while True:
-            data = await reader.read(4096)
+            data = await src_r.read(4096)
             if not data:
                 break
-            writer.write(data)
-            await writer.drain()
-    except:
+            dst_w.write(data)
+            await dst_w.drain()
+    except Exception:
         pass
-    finally:
-        writer.close()
 
-async def handle(r, w):
+def ws_accept_key(key: bytes) -> str:
+    combined = key + WS_MAGIC.encode()
+    return base64.b64encode(hashlib.sha1(combined).digest()).decode()
+
+async def handle_client(reader, writer):
     try:
-        head = b''
-        while b'\r\n\r\n' not in head:
-            head += await r.read(1024)
-        w.write(HANDSHAKE)
-        await w.drain()
-        sr, sw = await asyncio.open_connection(SSH_HOST, SSH_PORT)
-        await asyncio.gather(pipe(r, sw), pipe(sr, w))
-    except:
+        peek = await reader.read(8)
+        if not peek:
+            return
+        if peek[:3] in (b"GET", b"POS", b"PUT", b"HEA", b"OPT"):
+            rest = b""
+            if b"\r\n\r\n" not in peek:
+                rest = await reader.read(8192)
+            full_head = peek + rest
+            head_lower = full_head.lower()
+            is_ws = b"upgrade: websocket" in head_lower or b"upgrade:websocket" in head_lower
+            if is_ws:
+                ws_key = b""
+                for line in full_head.split(b"\r\n"):
+                    if line.lower().startswith(b"sec-websocket-key:"):
+                        ws_key = line.split(b":", 1)[1].strip()
+                        break
+                accept = ws_accept_key(ws_key)
+                response = (
+                    b"HTTP/1.1 101 Switching Protocols\r\n"
+                    b"Upgrade: websocket\r\n"
+                    b"Connection: Upgrade\r\n"
+                    b"Sec-WebSocket-Accept: " + accept.encode() + b"\r\n\r\n"
+                )
+                writer.write(response)
+                await writer.drain()
+                ssh_r, ssh_w = await asyncio.open_connection(SSH_HOST, SSH_PORT)
+                await asyncio.gather(ws_to_ssh(reader, ssh_w), ssh_to_ws(ssh_r, writer))
+            else:
+                ssh_r, ssh_w = await asyncio.open_connection(SSH_HOST, SSH_PORT)
+                ssh_w.write(full_head)
+                await ssh_w.drain()
+                await asyncio.gather(pipe(reader, ssh_w), pipe(ssh_r, writer))
+        else:
+            ssh_r, ssh_w = await asyncio.open_connection(SSH_HOST, SSH_PORT)
+            ssh_w.write(peek)
+            await ssh_w.drain()
+            await asyncio.gather(pipe(reader, ssh_w), pipe(ssh_r, writer))
+    except Exception:
         pass
     finally:
-        w.close()
+        try:
+            writer.close()
+        except Exception:
+            pass
+
+async def ws_to_ssh(ws_reader, ssh_writer):
+    try:
+        while True:
+            header = await ws_reader.readexactly(2)
+            opcode = header[0] & 0x0F
+            masked = bool(header[1] & 0x80)
+            length = header[1] & 0x7F
+            if length == 126:
+                ext = await ws_reader.readexactly(2)
+                length = int.from_bytes(ext, "big")
+            elif length == 127:
+                ext = await ws_reader.readexactly(8)
+                length = int.from_bytes(ext, "big")
+            mask_key = await ws_reader.readexactly(4) if masked else b""
+            payload = await ws_reader.readexactly(length)
+            if masked:
+                payload = bytes(b ^ mask_key[i % 4] for i, b in enumerate(payload))
+            if opcode == 0x8:
+                break
+            if opcode in (0x1, 0x2, 0x0):
+                ssh_writer.write(payload)
+                await ssh_writer.drain()
+    except Exception:
+        pass
+    finally:
+        ssh_writer.close()
+
+async def ssh_to_ws(ssh_reader, ws_writer):
+    try:
+        while True:
+            data = await ssh_reader.read(4096)
+            if not data:
+                break
+            n = len(data)
+            if n < 126:
+                header = bytes([0x82, n])
+            elif n <= 65535:
+                header = bytes([0x82, 126]) + n.to_bytes(2, "big")
+            else:
+                header = bytes([0x82, 127]) + n.to_bytes(8, "big")
+            ws_writer.write(header + data)
+            await ws_writer.drain()
+    except Exception:
+        pass
 
 async def main():
-    srv = await asyncio.start_server(handle, '0.0.0.0', WS_PORT)
+    srv = await asyncio.start_server(handle_client, "0.0.0.0", LISTEN_PORT)
     async with srv:
         await srv.serve_forever()
 
-asyncio.run(main())
-WSEOF
-        chmod 755 /usr/local/bin/turbonet-wssh.py
+if __name__ == "__main__":
+    asyncio.run(main())
+PYEOF
 
-        cat > /etc/systemd/system/turbonet-wssh.service << 'WSSVCEOF'
+    chmod 755 /usr/local/bin/turbonet-proxy80.py
+
+    cat > /etc/systemd/system/turbonet-proxy80.service << 'SVCEOF'
 [Unit]
-Description=TURBONET XRAY WebSocket SSH Bridge porta 80
+Description=TURBONET XRAY SSH Proxy porta 80 (TCP + WebSocket)
 After=network.target turbonet-dropbear.service
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 /usr/local/bin/turbonet-wssh.py
+ExecStart=/usr/bin/python3 /usr/local/bin/turbonet-proxy80.py
 Restart=always
 RestartSec=3
+StandardOutput=journal
+StandardError=journal
+LimitNOFILE=65536
 
 [Install]
 WantedBy=multi-user.target
-WSSVCEOF
-        systemctl daemon-reload
-        systemctl enable  turbonet-wssh >/dev/null 2>&1
-        systemctl restart turbonet-wssh >/dev/null 2>&1
-        sleep 1
-        systemctl is-active --quiet turbonet-wssh 2>/dev/null && \
-            echo -e "${TXT_GREEN}✅ WebSocket SSH ativo na porta 80${RESET}" || \
-            echo -e "${TXT_YELLOW}⚠  WebSocket SSH falhou.${RESET}"
-    fi
+SVCEOF
 
-    # --- PORTA 80 REMOTE (proxy reverso SSH sobre HTTP) ---
-    if [ "$proxy_opt" = "4" ]; then
-        echo -e "${TXT_YELLOW}Adicionando rota /ssh no Xray...${RESET}"
-        if [ -s "$CONFIG_PATH" ] && jq empty "$CONFIG_PATH" 2>/dev/null; then
-            local tmp; tmp=$(mktemp "${CONFIG_PATH}.tmp.XXXXXX")
-            jq '(.inbounds[] | select(.tag=="inbound-turbonet") | .settings.fallbacks) =
-                [
-                    {"name":"","alpn":"","path":"/ssh","dest":22,"xver":0},
-                    {"name":"","alpn":"","path":"","dest":22,"xver":0}
-                ]' "$CONFIG_PATH" > "$tmp" 2>/dev/null
-
-            if jq empty "$tmp" 2>/dev/null; then
-                cp -f "$CONFIG_PATH" "${CONFIG_PATH}.bak"
-                mv -f "$tmp" "$CONFIG_PATH"
-                _apply_config_perms
-                systemctl restart xray >/dev/null 2>&1 || true
-                echo -e "${TXT_GREEN}✅ Rota /ssh adicionada no Xray.${RESET}"
-            else
-                rm -f "$tmp"
-            fi
-        fi
-    fi
-    sleep 1
+    systemctl daemon-reload
+    systemctl enable  turbonet-proxy80 >/dev/null 2>&1
+    systemctl restart turbonet-proxy80 >/dev/null 2>&1
+    sleep 2
 
     local pub_ip
     pub_ip=$(curl -4fsSL --max-time 5 https://icanhazip.com 2>/dev/null || echo "SEU_IP")
-    echo ""
-    echo -e "${TXT_GREEN}================================================${RESET}"
-    echo -e "${TXT_GREEN}✅ PROXY SSH COMPLETO CONFIGURADO${RESET}"
-    echo -e "${TXT_GREEN}================================================${RESET}"
-    echo ""
-    echo -e " ${TXT_CYAN}Conexões disponíveis:${RESET}"
-    echo -e "  SSH direto 443:     ${TXT_YELLOW}${pub_ip}:443${RESET} (via Xray fallback)"
-    echo -e "  SSH proxy TCP 8080: ${TXT_YELLOW}${pub_ip}:8080${RESET}"
-    echo -e "  SSH WebSocket 80:   ${TXT_YELLOW}ws://${pub_ip}:80${RESET} (Ideal Azion CDN)"
-    echo -e "  SOCKS5:             ${TXT_YELLOW}${pub_ip}:1080${RESET}"
-    echo ""
-    echo -e " ${TXT_CYAN}Configuração no app (HTTP Injector/HTTP Custom):${RESET}"
-    echo -e "  Modo SSH + Host: ${TXT_YELLOW}${pub_ip}${RESET}"
-    echo -e "  Porta: ${TXT_YELLOW}443${RESET} ou ${TXT_YELLOW}80${RESET}"
-    echo -e "  Usuário/Senha: ${TXT_YELLOW}mesmo do painel TURBONET XRAY${RESET}"
-    echo -e "  UDPGW: ${TXT_YELLOW}127.0.0.1:7300${RESET}"
-    echo ""
-    echo -e " ${TXT_CYAN}Com Azion CDN:${RESET}"
-    echo -e "  Host CDN: ${TXT_YELLOW}turbonet.azion.app${RESET} → VPS:80 ou VPS:443"
-    echo -e "${TXT_GREEN}================================================${RESET}"
+
+    if systemctl is-active --quiet turbonet-proxy80 2>/dev/null; then
+        echo ""
+        echo -e "${TXT_GREEN}================================================${RESET}"
+        echo -e "${TXT_GREEN}✅ PROXY SSH PORTA 80 ATIVO (TCP + WebSocket)${RESET}"
+        echo -e "${TXT_GREEN}================================================${RESET}"
+        echo ""
+        echo -e " ${TXT_CYAN}Modos na porta 80:${RESET}"
+        echo -e "  TCP direto:   ${TXT_YELLOW}${pub_ip}:80${RESET}"
+        echo -e "  WebSocket:    ${TXT_YELLOW}ws://${pub_ip}:80${RESET}"
+        echo ""
+        echo -e " ${TXT_CYAN}Via Azion CDN:${RESET}"
+        echo -e "  ${TXT_YELLOW}ws://turbonet.azion.app:80${RESET} ou ${TXT_YELLOW}turbonet.azion.app:80${RESET}"
+        echo ""
+        echo -e " ${TXT_CYAN}Configuração no app:${RESET}"
+        echo -e "  Modo SSH: host ${TXT_YELLOW}${pub_ip}${RESET} porta ${TXT_YELLOW}80${RESET}"
+        echo -e "  Modo WS:  url  ${TXT_YELLOW}ws://${pub_ip}:80${RESET}"
+        echo -e "  UDPGW:        ${TXT_YELLOW}127.0.0.1:7300${RESET}"
+        echo -e "${TXT_GREEN}================================================${RESET}"
+    else
+        echo -e "${TXT_RED}❌ Falha ao iniciar proxy porta 80.${RESET}"
+        journalctl -u turbonet-proxy80 -n 10 --no-pager 2>/dev/null || true
+    fi
 }
 
 _remove_proxy80() {
-    for svc in turbonet-proxy80 turbonet-socks5 turbonet-wssh; do
-        systemctl stop    "$svc" >/dev/null 2>&1 || true
-        systemctl disable "$svc" >/dev/null 2>&1 || true
-        rm -f "/etc/systemd/system/${svc}.service"
-    done
-    rm -f /usr/local/bin/turbonet-wssh.py
+    systemctl stop    turbonet-proxy80 >/dev/null 2>&1 || true
+    systemctl disable turbonet-proxy80 >/dev/null 2>&1 || true
+    rm -f /etc/systemd/system/turbonet-proxy80.service
+    rm -f /usr/local/bin/turbonet-proxy80.py
     systemctl daemon-reload
-    echo -e "${TXT_GREEN}✅ Proxies removidos.${RESET}"
+    echo -e "${TXT_GREEN}✅ Proxy porta 80 removido.${RESET}"
 }
 
 # --- SINCRONIZAR USERS.DB → SSH ---
@@ -492,19 +457,15 @@ _show_info() {
     echo -e " Host: ${TXT_YELLOW}${pub_ip}${RESET} ou ${TXT_YELLOW}${preset_domain:-domínio CDN}${RESET}"
     echo -e " Porta: ${TXT_YELLOW}443${RESET} | Protocolo: XHTTP | UUID do usuário"
     echo ""
-    echo -e "${TXT_CYAN}━━━━ MODO SSH (mesma porta 443 via fallback) ━${RESET}"
+    echo -e "${TXT_CYAN}━━━━ MODO SSH DIRETO ━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
     echo -e " Host: ${TXT_YELLOW}${pub_ip}${RESET}"
-    echo -e " Porta: ${TXT_YELLOW}443${RESET} | Usuário+Senha do painel"
-    echo -e " UDPGW: ${TXT_YELLOW}127.0.0.1:7300${RESET}"
+    echo -e " Porta: ${TXT_YELLOW}443${RESET} (via Xray fallback)"
+    echo -e " Usuário/Senha: Do painel | UDPGW: 127.0.0.1:7300"
     echo ""
-    echo -e "${TXT_CYAN}━━━━ MODO SSH PORTA 8080 (proxy TCP) ━━━━━━━━${RESET}"
-    echo -e " Host: ${TXT_YELLOW}${pub_ip}${RESET} | Porta: ${TXT_YELLOW}8080${RESET}"
-    echo ""
-    echo -e "${TXT_CYAN}━━━━ WEBSOCKET SSH (porta 80) ━━━━━━━━━━━━━${RESET}"
-    echo -e " URL: ${TXT_YELLOW}ws://${pub_ip}:80${RESET}"
-    echo ""
-    echo -e "${TXT_CYAN}━━━━ SOCKS5 (porta 1080) ━━━━━━━━━━━━━━━━━━━${RESET}"
-    echo -e " Host: ${TXT_YELLOW}${pub_ip}:1080${RESET} (Exige Usuário/Senha do painel)"
+    echo -e "${TXT_CYAN}━━━━ MODO SSH PROXY UNIFICADO (porta 80) ━━━${RESET}"
+    echo -e " Suporta TCP direto E WebSocket na mesma porta"
+    echo -e " Host: ${TXT_YELLOW}${pub_ip}${RESET} | Porta: ${TXT_YELLOW}80${RESET}"
+    echo -e " URL WS: ${TXT_YELLOW}ws://${pub_ip}:80${RESET}"
     echo ""
     echo -e "${TXT_CYAN}━━━━ COM AZION CDN ━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
     echo -e " Configure Azion: porta 80/443 → ${pub_ip}"
@@ -520,19 +481,19 @@ while true; do
     echo ""
     echo -e " Dropbear SSH:   $(_dropbear_status)"
     echo -e " Xray Fallback:  $(_xray_fallback_status)"
-    echo -e " Proxy porta 80: $(_proxy80_status)"
+    echo -e " Proxy Unificado: $(_proxy80_status)"
     echo ""
     echo -e "${TXT_GREEN}[1] Instalação completa (recomendado)${RESET}"
-    echo "    → Dropbear :22 + Xray fallback + Proxy 80 + WS + SOCKS5"
+    echo "    → Dropbear :22 + Xray fallback + Proxy 80 Unificado"
     echo ""
     echo -e "${TXT_CYAN}[2] Instalar apenas Dropbear (porta 22)${RESET}"
     echo -e "${TXT_CYAN}[3] Configurar fallback no Xray (443→22)${RESET}"
-    echo -e "${TXT_CYAN}[4] Ativar proxies (Porta 80, 8080, 1080)${RESET}"
+    echo -e "${TXT_CYAN}[4] Ativar Proxy Unificado (Porta 80 TCP+WS)${RESET}"
     echo -e "${TXT_CYAN}[5] Sincronizar usuários DB → SSH${RESET}"
     echo -e "${TXT_CYAN}[6] Criar usuário SSH manualmente${RESET}"
     echo -e "${TXT_CYAN}[7] Ver info de conexão${RESET}"
     echo -e "${TXT_CYAN}[8] Ver logs Dropbear${RESET}"
-    echo -e "${TXT_RED}[9] Remover proxies (80/8080/1080)${RESET}"
+    echo -e "${TXT_RED}[9] Remover Proxy (Porta 80)${RESET}"
     echo -e "${TXT_RED}[10] Remover tudo (Dropbear + fallback + proxies)${RESET}"
     echo -e "${TXT_CYAN}[0] Voltar${RESET}"
     echo "-----------------------------------------"
