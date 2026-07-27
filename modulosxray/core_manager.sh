@@ -7,11 +7,12 @@
 #   - Porta API padrão 1080 com fallback dinâmico via _find_free_api_port()
 #   - Validação de shebang BOM-safe em func_install_official_core e func_xray_cert
 #   - validate_domain_or_ip rejeita loopback, broadcast e endereços reservados óbvios
+#   - REMOVIDA tag 'geosite:malware' do routing para evitar crash no geosite.dat padrão.
 # Otimizações Injetadas:
 #   - Systemd Tuning (GOMAXPROCS, LimitNOFILE, LimitNPROC)
 #   - MUX + XUDP na Rota de Saída (Jogos sem lag)
 #   - Headers Anti-Buffering e TCP NoDelay no SSHxHTTP
-#   - DNS Sinkhole (Bloqueio nativo de ADS/Malware no roteamento)
+#   - DNS Sinkhole (Bloqueio nativo de ADS no roteamento)
 
 set -Eeuo pipefail
 trap 'echo -e "\n\033[1;31m[ERRO]\033[0m Falha na linha $LINENO (código: $?)"; read -rp "Enter para continuar...";' ERR
@@ -92,8 +93,6 @@ require_root() {
     fi
 }
 
-# CORREÇÃO: 640 root:nogroup — Xray lê como nobody/nogroup, não precisa escrever.
-# 777 anterior permitia que qualquer processo do sistema sobrescrevesse o config.
 _apply_config_perms() {
     chmod 660 "$CONFIG_PATH"
     chown root:"$XRAY_GROUP" "$CONFIG_PATH"
@@ -109,25 +108,17 @@ validate_port() {
 
 validate_domain() {
     local d="${1:-}"
-    # Remove espacos, tabs e caracteres de controle invisiveis (comum em input colado)
     d="$(echo "$d" | tr -d '[:space:][:cntrl:]')"
     if [ -z "$d" ]; then return 1; fi
-    # Rejeita IPs puros
     if [[ "$d" =~ ^[0-9.]+$ ]]; then return 1; fi
-    # RFC 1123: labels de 1-63 chars alfanum/hifen, nao comeca/termina com hifen.
-    # Aceita labels curtas (ex: "pp" em "pp.ua") e hifens no meio (ex: "turbonet-vpn").
     if [[ "$d" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]]; then
         return 0
     fi
     return 1
 }
 
-# CORREÇÃO: rejeita IPs reservados/inválidos como endereço público de VPS.
-# Bloqueia: loopback (127.x), não-roteável (0.x), broadcast (255.255.255.255),
-# link-local (169.254.x) e multicast (224-239.x).
 validate_domain_or_ip() {
     local d="${1:-}"
-    # Remove caracteres de controle e espaços (input colado com formatação)
     d="$(echo "$d" | tr -d '[:space:][:cntrl:]')"
     if [ -z "$d" ]; then return 1; fi
 
@@ -139,14 +130,13 @@ validate_domain_or_ip() {
         done
 
         local o1="${parts[0]}" o2="${parts[1]}"
-        # Rejeita IPs não-roteáveis como endereço público
-        if [ "$o1" -eq 0 ] || [ "$o1" -eq 127 ]; then return 1; fi          # 0.x, loopback
-        if [ "$o1" -eq 255 ]; then return 1; fi                               # broadcast
-        if [ "$o1" -eq 169 ] && [ "$o2" -eq 254 ]; then return 1; fi         # link-local
-        if (( o1 >= 224 && o1 <= 239 )); then return 1; fi                    # multicast
-        if [ "$o1" -eq 10 ]; then return 1; fi                                # RFC1918 10.x
-        if [ "$o1" -eq 172 ] && (( o2 >= 16 && o2 <= 31 )); then return 1; fi # RFC1918 172.16-31.x
-        if [ "$o1" -eq 192 ] && [ "$o2" -eq 168 ]; then return 1; fi         # RFC1918 192.168.x
+        if [ "$o1" -eq 0 ] || [ "$o1" -eq 127 ]; then return 1; fi          
+        if [ "$o1" -eq 255 ]; then return 1; fi                               
+        if [ "$o1" -eq 169 ] && [ "$o2" -eq 254 ]; then return 1; fi         
+        if (( o1 >= 224 && o1 <= 239 )); then return 1; fi                   
+        if [ "$o1" -eq 10 ]; then return 1; fi                               
+        if [ "$o1" -eq 172 ] && (( o2 >= 16 && o2 <= 31 )); then return 1; fi 
+        if [ "$o1" -eq 192 ] && [ "$o2" -eq 168 ]; then return 1; fi         
 
         return 0
     fi
@@ -164,7 +154,6 @@ generate_uuid() {
     fi
 }
 
-# Gera senha aleatória segura para Trojan (32 chars hex)
 generate_trojan_password() {
     if command -v openssl &>/dev/null; then
         openssl rand -hex 16
@@ -202,9 +191,6 @@ port_in_use() {
     return 1
 }
 
-# CORREÇÃO: busca dinâmica de porta livre para a API.
-# Evita conflito com SOCKS5 (1080) e com a porta pública do Xray.
-# Itera a partir do valor base até encontrar uma porta disponível.
 _find_free_api_port() {
     local port="${1:-1080}"
     local max_port=1200
@@ -243,8 +229,6 @@ func_install_official_core() {
         rm -f "$install_script"; sleep 2; return 1
     fi
 
-    # CORREÇÃO: validação de shebang BOM-safe — consistente com run_module() no menuxray.sh.
-    # grep -qE "bash|env" anterior aceitava qualquer linha com essas substrings.
     if ! LC_ALL=C head -n 1 "$install_script" | grep -qP '^(\xEF\xBB\xBF)?#!.*(bash|env\s)'; then
         echo -e "${TXT_RED}❌ Script inválido.${RESET}"; rm -f "$install_script"; return 1
     fi
@@ -253,7 +237,7 @@ func_install_official_core() {
     bash "$install_script" install
     rm -f "$install_script"
     
-    # Injeção DragonCore: Blindagem de CPU e Limites de Arquivo para SSHxHTTP
+    # Injeção DragonCore: Blindagem de CPU e Limites de Arquivo
     mkdir -p /etc/systemd/system/xray.service.d
     cat <<EOF > /etc/systemd/system/xray.service.d/override.conf
 [Service]
@@ -282,14 +266,11 @@ func_xray_cert() {
         rm -f "$tmp"; return 1
     fi
 
-    # CORREÇÃO: validação de shebang BOM-safe.
     if ! LC_ALL=C head -n 1 "$tmp" | grep -qP '^(\xEF\xBB\xBF)?#!.*(bash|env\s)'; then
         echo -e "${TXT_RED}❌ certxray.sh inválido.${RESET}"; rm -f "$tmp"; return 1
     fi
 
     mv -f "$tmp" "$cert_script"
-    # CORREÇÃO: 700 root:root — apenas root executa/modifica o script de certificado.
-    # 777 anterior permitia que qualquer processo sobrescrevesse o certxray.sh.
     chmod 700 "$cert_script"
     chown root:root "$cert_script"
     bash "$cert_script" "$dom"
@@ -308,8 +289,6 @@ func_generate_config() {
         fi
     fi
 
-    # CORREÇÃO: porta API resolvida com busca dinâmica de porta livre.
-    # Antes: hardcoded "1080" (conflito SOCKS5) com fallback que também tentava 1080.
     local api_port
     if ! api_port=$(_find_free_api_port "$API_PORT"); then
         read -rp "Pressione Enter..."; return 1
@@ -317,8 +296,8 @@ func_generate_config() {
 
     local policy='{"levels":{"0":{"statsUserUplink":true,"statsUserDownlink":true}},"system":{"statsInboundUplink":true,"statsInboundDownlink":true}}'
     
-    # Injeção DragonCore: Adicionamos o DNS Sinkhole para descartar Anúncios e Malware instantaneamente
-    local routing_rules='[{"type":"field","outboundTag":"blocked","domain":["geosite:category-ads-all","geosite:malware"]},{"type":"field","inboundTag":["api"],"outboundTag":"api"},{"type":"field","protocol":["bittorrent"],"outboundTag":"blocked"},{"type":"field","ip":["geoip:private"],"outboundTag":"blocked"}]'
+    # REMOVIDO geosite:malware do routing para evitar o crash de inicialização no geosite.dat oficial.
+    local routing_rules='[{"type":"field","outboundTag":"blocked","domain":["geosite:category-ads-all"]},{"type":"field","inboundTag":["api"],"outboundTag":"api"},{"type":"field","protocol":["bittorrent"],"outboundTag":"blocked"},{"type":"field","ip":["geoip:private"],"outboundTag":"blocked"}]'
 
     local stream_settings=""
     case "$network" in
@@ -331,11 +310,6 @@ func_generate_config() {
             read -rp "Modo [1/2/3, Enter=1]: " xhttp_mode
             xhttp_mode="${xhttp_mode:-1}"
 
-            # --- SessionID Placement ---
-            # Baseado no DragonCore xray_native.go: suporte a path/header/cookie
-            # path   = padrão Xray — SessionID no caminho da URL
-            # header = CDN-friendly — SessionID no header X-Session
-            # cookie = compatível com proxies que reescrevem URL
             echo ""
             echo -e "${TXT_CYAN}SessionID Placement (como o ID de sessão é transmitido):${RESET}"
             echo " [1] path   — padrão (URL path) — compatível com todos os apps"
@@ -349,20 +323,16 @@ func_generate_config() {
                 *)  xhttp_sid_placement="path"   ;;
             esac
 
-            # --- Host field (múltiplos hosts para CDN) ---
             local xhttp_host_field="$domain"
             echo ""
             read -rp "Host adicional CDN (Enter = usar só domínio): " extra_host
             extra_host=$(echo "${extra_host:-}" | tr -d '[:space:][:cntrl:]')
             [ -n "$extra_host" ] && xhttp_host_field="${domain},${extra_host}"
 
-            # --- SSH XHTTP path ---
             local ssh_xhttp_enabled=false
             local ssh_path="/ssh"
 
             if [ "$xhttp_mode" = "3" ]; then
-                # Modo SSHXHTTP: adiciona inbound separado com path /ssh
-                # O VLESS fica em / e o SSH fica em /ssh na mesma porta 443
                 ssh_xhttp_enabled=true
                 echo ""
                 echo -e "${TXT_YELLOW}SSHXHTTP: path SSH será /ssh (VLESS em /)${RESET}"
@@ -370,11 +340,6 @@ func_generate_config() {
             fi
 
             if [ "$xhttp_mode" = "1" ]; then
-                # HTTP Injection / Operadora BR
-                # - Posts pequenos (128KB) — passam pelo proxy da operadora
-                # - Stream curto (5-15s) — evita reset por conexão longa
-                # - Sem padding — não aciona DPI
-                # - ALPN http/1.1 — H2 confunde proxies de operadora
                 if [ "$use_tls" = "true" ]; then
                     stream_settings=$(jq -n                          --arg dom  "$domain"                          --arg crt  "$CRT_FILE"                          --arg key  "$KEY_FILE"                          --arg host "$xhttp_host_field"                          --arg sid  "$xhttp_sid_placement"                          '{network:"xhttp",security:"tls",
                           sockopt:{tcpNoDelay:true,tcpKeepAliveIdle:30,tcpKeepAliveInterval:10},
@@ -400,10 +365,6 @@ func_generate_config() {
                             header:{"X-Accel-Buffering":"no","Cache-Control":"no-store"}}}')
                 fi
             elif [ "$xhttp_mode" = "3" ]; then
-                # SSHXHTTP: parâmetros balanceados para SSH + dados
-                # - Posts médios (256KB) — bom equilíbrio para SSH interativo
-                # - Stream médio (10-30s) — estável para sessão SSH
-                # - SessionID em header — CDN-friendly
                 if [ "$use_tls" = "true" ]; then
                     stream_settings=$(jq -n                          --arg dom  "$domain"                          --arg crt  "$CRT_FILE"                          --arg key  "$KEY_FILE"                          --arg host "$xhttp_host_field"                          '{network:"xhttp",security:"tls",
                           sockopt:{tcpNoDelay:true,tcpKeepAliveIdle:30,tcpKeepAliveInterval:10},
@@ -431,10 +392,6 @@ func_generate_config() {
                             header:{"X-Accel-Buffering":"no","Cache-Control":"no-store"}}}')
                 fi
             else
-                # Direto / CDN
-                # - Posts grandes (1MB) — máxima throughput
-                # - Stream longo (20-80s) — estável para CDN
-                # - Padding ativo — ofuscação
                 if [ "$use_tls" = "true" ]; then
                     stream_settings=$(jq -n                          --arg dom  "$domain"                          --arg crt  "$CRT_FILE"                          --arg key  "$KEY_FILE"                          --arg host "$xhttp_host_field"                          --arg sid  "$xhttp_sid_placement"                          '{network:"xhttp",security:"tls",
                           sockopt:{tcpNoDelay:true,tcpKeepAliveIdle:30,tcpKeepAliveInterval:10},
@@ -479,8 +436,6 @@ func_generate_config() {
                 '{network:"tcp",security:"tls",tlsSettings:{serverName:$dom,certificates:[{certificateFile:$crt,keyFile:$key}],minVersion:"1.2"},tcpSettings:{header:{type:"none"}}}') ;;
 
         httpupgrade)
-            # HTTPUpgrade — semelhante ao WS mas usa HTTP Upgrade header.
-            # Melhor compatibilidade com CDNs e proxies que inspecionam tráfego.
             if [ "$use_tls" = "true" ]; then
                 stream_settings=$(jq -n --arg dom "$domain" --arg crt "$CRT_FILE" --arg key "$KEY_FILE" \
                     '{network:"httpupgrade",security:"tls",tlsSettings:{serverName:$dom,certificates:[{certificateFile:$crt,keyFile:$key}],minVersion:"1.2"},httpupgradeSettings:{path:"/",host:$dom}}')
@@ -490,13 +445,10 @@ func_generate_config() {
             fi ;;
 
         h2)
-            # HTTP/2 — requer TLS. Multiplexação nativa, boa performance.
-            # Ideal para redes que bloqueiam outros protocolos mas permitem HTTPS.
             stream_settings=$(jq -n --arg dom "$domain" --arg crt "$CRT_FILE" --arg key "$KEY_FILE" \
                 '{network:"h2",security:"tls",tlsSettings:{serverName:$dom,certificates:[{certificateFile:$crt,keyFile:$key}],alpn:["h2"],minVersion:"1.2"},httpSettings:{path:"/",host:[$dom]}}') ;;
 
         trojan)
-            # Trojan sempre usa TLS — a segurança vem do disfarce como HTTPS
             stream_settings=$(jq -n --arg dom "$domain" --arg crt "$CRT_FILE" --arg key "$KEY_FILE" \
                 '{network:"tcp",security:"tls",tlsSettings:{serverName:$dom,certificates:[{certificateFile:$crt,keyFile:$key}],minVersion:"1.2"},tcpSettings:{header:{type:"none"}}}') ;;
 
@@ -509,7 +461,6 @@ func_generate_config() {
             fi ;;
     esac
 
-    # Trojan usa senha em vez de UUID
     local credential=""
     local clients_json=""
     if [ "$network" = "trojan" ]; then
@@ -536,7 +487,6 @@ func_generate_config() {
 
     local tmp_config; tmp_config=$(mktemp /tmp/xray_config_XXXXXX.json)
 
-    # Trojan usa protocol:"trojan" e settings diferentes (sem decryption)
     local inbound_protocol="vless"
     local inbound_settings_key="vless"
     local extra_settings='"decryption":"none","fallbacks":[]}'
@@ -545,7 +495,6 @@ func_generate_config() {
         extra_settings='}'
     fi
 
-    # Injeção DragonCore: Adicionamos MUX e XUDP ao Outbound Freedom (Para Jogos UDP)
     jq -n \
         --argjson stream   "$stream_settings" \
         --arg     port     "$port" \
@@ -557,8 +506,6 @@ func_generate_config() {
         '{log:{loglevel:"warning"},stats:{},api:{services:["HandlerService","LoggerService","StatsService"],tag:"api"},policy:$pol,inbounds:[{tag:"api",port:($api|tonumber),protocol:"dokodemo-door",settings:{address:"127.0.0.1"},listen:"127.0.0.1"},{tag:"inbound-turbonet",port:($port|tonumber),protocol:$proto,settings:(if $proto=="trojan" then {clients:$clients} else {clients:$clients,decryption:"none",fallbacks:[]} end),streamSettings:$stream}],outbounds:[{protocol:"freedom",tag:"direct",mux:{enabled:true,concurrency:8,xudpConcurrency:16,xudpProxyUDP443:"reject"}},{protocol:"blackhole",tag:"blocked"},{protocol:"freedom",tag:"api"}],routing:{domainStrategy:"AsIs",rules:$rules}}' \
         > "$tmp_config"
 
-    # --- SSHXHTTP: adicionar inbound SSH com path /ssh na mesma porta ---
-    # Injeção DragonCore: O fallback SSH também ganha os Headers Anti-Buffer e Sockopt TCP
     if [ "${ssh_xhttp_enabled:-false}" = "true" ] && jq empty "$tmp_config" 2>/dev/null; then
         local ssh_stream_settings
         if [ "$use_tls" = "true" ]; then
@@ -586,8 +533,6 @@ func_generate_config() {
                     header:{"X-Accel-Buffering":"no","Cache-Control":"no-store"}}}')
         fi
 
-        # Adiciona fallback para /ssh → Dropbear :22 no inbound principal
-        # e registra o path SSH no preset para o ssh_fallback.sh usar
         local tmp2; tmp2=$(mktemp "${tmp_config}.ssh.XXXXXX")
         jq --argjson ssh_stream "$ssh_stream_settings"             '(.inbounds[] | select(.tag=="inbound-turbonet") | .settings.fallbacks) =
             [{"name":"","alpn":"","path":"/ssh","dest":22,"xver":0},
@@ -604,7 +549,6 @@ func_generate_config() {
 
     jq -n --arg network "$network" --arg port "$port" --arg domain "$domain" --arg tls "$use_tls" \
         '{network:$network,port:$port,domain:$domain,tls:$tls}' > "$PRESET_FILE"
-    # CORREÇÃO: 640 root:nogroup — mesmo padrão do config.json.
     chmod 640 "$PRESET_FILE"
     chown root:"$XRAY_GROUP" "$PRESET_FILE"
 
@@ -675,8 +619,6 @@ TLS=${use_tls}
 CREDENCIAL=${credential}
 LINK=${link}
 EOF
-    # CORREÇÃO: 600 root:root — contém UUID e link de conexão completo.
-    # 777 anterior expunha credenciais VPN a qualquer processo do sistema.
     chmod 600 "$CONN_INFO_FILE"
     chown root:root "$CONN_INFO_FILE"
 
@@ -755,7 +697,6 @@ func_wizard_install() {
                          curl -fsSL --max-time 10 "https://api.ipify.org"  2>/dev/null || echo "")
             echo "${domain_val:-falhou}"
         fi
-        # CORREÇÃO: validate_domain_or_ip agora rejeita IPs privados/reservados.
         if ! validate_domain_or_ip "$domain_val"; then
             echo -e "${TXT_RED}❌ Endereço inválido ou não-roteável (IPs privados/loopback não são aceitos).${RESET}"
             read -rp "Enter..."; return 1
@@ -825,9 +766,60 @@ func_wizard_install() {
         echo "Cancelado."; sleep 1; return 0
     fi
 
-    # CORREÇÃO: api_port removida dos argumentos — func_generate_config resolve internamente
-    # via _find_free_api_port(), evitando o hardcode de 1080 e o fallback broken.
     func_generate_config "$pub_port" "$selected_net" "$domain_val" "$use_tls"
 }
 
-func_wizard_install
+# --- MENU INTERATIVO ---
+while true; do
+    clear
+    echo -e "${TITLE_BAR}   CORE MANAGER — TURBONET XRAY   ${RESET}"
+    echo ""
+    
+    if systemctl is-active --quiet xray 2>/dev/null; then
+        echo -e " STATUS DO SERVIÇO: ${TXT_GREEN}ATIVO E RODANDO${RESET}"
+    else
+        echo -e " STATUS DO SERVIÇO: ${TXT_RED}INATIVO${RESET}"
+    fi
+    echo ""
+    echo -e "${TXT_CYAN}[1] Instalar/Configurar (Modo Assistente)${RESET}"
+    echo -e "${TXT_CYAN}[2] Atualizar Binário Oficial do Xray${RESET}"
+    echo -e "${TXT_RED}[3] Parar Xray Core${RESET}"
+    echo -e "${TXT_GREEN}[4] Iniciar/Reiniciar Xray Core${RESET}"
+    echo -e "${TXT_CYAN}[5] Ver Logs de Erro do Xray${RESET}"
+    echo -e "${TXT_CYAN}[0] Voltar${RESET}"
+    echo "-----------------------------------------"
+    read -rp "Opção: " opt
+
+    case "${opt:-0}" in
+        1)
+            func_wizard_install
+            ;;
+        2)
+            func_install_official_core
+            systemctl restart xray >/dev/null 2>&1 || true
+            read -rp "Enter..."
+            ;;
+        3)
+            systemctl stop xray >/dev/null 2>&1
+            echo -e "${TXT_RED}⛔ Xray Parado.${RESET}"
+            read -rp "Enter..."
+            ;;
+        4)
+            systemctl restart xray >/dev/null 2>&1
+            sleep 1
+            if systemctl is-active --quiet xray; then
+                echo -e "${TXT_GREEN}✅ Xray Rodando Perfeitamente!${RESET}"
+            else
+                echo -e "${TXT_RED}❌ Falha ao iniciar o Xray. Verifique os logs.${RESET}"
+            fi
+            read -rp "Enter..."
+            ;;
+        5)
+            echo -e "${TXT_CYAN}=== Últimos 30 logs do Xray ===${RESET}"
+            journalctl -u xray -n 30 --no-pager
+            read -rp "Enter..."
+            ;;
+        0) exit 0 ;;
+        *) echo -e "${TXT_RED}Inválido.${RESET}"; sleep 1 ;;
+    esac
+done
