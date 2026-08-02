@@ -1,12 +1,9 @@
 #!/bin/bash
-# ssh_fallback.sh - TURBONET XRAY V1.0
-# SSH completo integrado ao Xray XHTTP:
-#   - Dropbear na porta 22 (loopback) — acesso via Xray fallback porta 443
-#   - Proxy Unificado Porta 80: TCP Direto E WebSocket na mesma porta.
-#   - Um cadastro = acesso XHTTP/VLESS + SSH simultaneamente
-# Correções Aplicadas:
-#   - Proxy Unificado em Python (TCP + WS) detecta automaticamente o protocolo.
-#   - Remoção do SOCKS5 (Dante) para blindar a VPS contra scanners de proxy aberto.
+# ssh_fallback.sh - TURBONET XRAY V2.0 (OpenSSH Nativo)
+# Integração total do Xray XHTTP com o OpenSSH da VPS:
+#   - Sem Dropbear! Usa o OpenSSH nativo da VPS na porta 22 (mais leve e rápido).
+#   - Xray Fallback (Porta 443 -> 22)
+#   - Proxy Unificado Porta 80 (TCP Direto e WebSocket -> 22).
 #   - Roteamento inteligente na porta 80 ideal para Azion e Vercel.
 
 set -Eeuo pipefail
@@ -14,7 +11,7 @@ trap 'echo -e "\n\033[1;31m[ERRO]\033[0m Falha na linha $LINENO"; sleep 2' ERR
 
 CONFIG_PATH="/usr/local/etc/xray/config.json"
 USER_DB="/opt/XrayTools/users.db"
-DROPBEAR_PORT=22
+SSH_PORT=22
 LOG_FILE="/tmp/ssh_fallback.log"
 
 TXT_GREEN='\033[1;32m'
@@ -68,10 +65,12 @@ _wait_xray_active() {
 }
 
 # --- STATUS ---
-_dropbear_status() {
-    systemctl is-active --quiet turbonet-dropbear 2>/dev/null && \
-        echo -e "${TXT_GREEN}ATIVO (porta 22 loopback)${RESET}" || \
-        echo -e "${TXT_RED}INATIVO${RESET}"
+_openssh_status() {
+    if systemctl is-active --quiet ssh 2>/dev/null || systemctl is-active --quiet sshd 2>/dev/null; then
+        echo -e "${TXT_GREEN}ATIVO (OpenSSH na porta 22)${RESET}"
+    else
+        echo -e "${TXT_RED}INATIVO (Verifique seu serviço SSH)${RESET}"
+    fi
 }
 
 _xray_fallback_status() {
@@ -90,59 +89,6 @@ _proxy80_status() {
         echo -e "${TXT_RED}INATIVO${RESET}"
 }
 
-# --- INSTALAR DROPBEAR NA PORTA 22 ---
-_install_dropbear() {
-    echo -e "${TXT_YELLOW}Instalando Dropbear SSH na porta 22...${RESET}"
-    : > "$LOG_FILE"
-    ensure_pkg dropbear dropbear
-
-    # Parar e desabilitar serviço padrão do pacote (usa init LSB que conflita)
-    systemctl stop    dropbear 2>/dev/null || true
-    systemctl disable dropbear 2>/dev/null || true
-    service   dropbear stop    2>/dev/null || true
-    update-rc.d dropbear disable 2>/dev/null || true
-    sleep 1
-
-    # Gerar chaves do host
-    mkdir -p /etc/dropbear
-    [ -f /etc/dropbear/dropbear_rsa_host_key ] || \
-        dropbearkey -t rsa   -f /etc/dropbear/dropbear_rsa_host_key   >>"$LOG_FILE" 2>&1 || true
-    [ -f /etc/dropbear/dropbear_ecdsa_host_key ] || \
-        dropbearkey -t ecdsa -f /etc/dropbear/dropbear_ecdsa_host_key >>"$LOG_FILE" 2>&1 || true
-
-    # Criar serviço systemd próprio na porta 22 (loopback)
-    cat > /etc/systemd/system/turbonet-dropbear.service << 'SVCEOF'
-[Unit]
-Description=TURBONET XRAY Dropbear SSH porta 22 (loopback)
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/usr/sbin/dropbear -F -E -p 127.0.0.1:22 -w -j -k
-Restart=always
-RestartSec=3
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-SVCEOF
-
-    systemctl daemon-reload
-    systemctl enable  turbonet-dropbear >/dev/null 2>&1
-    systemctl restart turbonet-dropbear >/dev/null 2>&1
-    sleep 2
-
-    if systemctl is-active --quiet turbonet-dropbear 2>/dev/null; then
-        echo -e "${TXT_GREEN}✅ Dropbear ativo em 127.0.0.1:22${RESET}"
-        return 0
-    else
-        echo -e "${TXT_RED}❌ Falha ao iniciar Dropbear.${RESET}"
-        journalctl -u turbonet-dropbear -n 15 --no-pager 2>/dev/null || true
-        return 1
-    fi
-}
-
 # --- CONFIGURAR FALLBACK NO XRAY (443 → 22) ---
 _configure_xray_fallback() {
     echo -e "${TXT_YELLOW}Configurando fallback SSH no Xray (443→22)...${RESET}"
@@ -156,8 +102,6 @@ _configure_xray_fallback() {
 
     if [ "$proto" != "vless" ]; then
         echo -e "${TXT_RED}❌ Fallback SSH requer protocolo VLESS.${RESET}"
-        echo -e " Protocolo atual: ${proto:-não encontrado}"
-        echo -e " Configure o Xray com VLESS+XHTTP na opção [04] do menu."
         return 1
     fi
 
@@ -165,7 +109,8 @@ _configure_xray_fallback() {
     local tmp; tmp=$(mktemp "${CONFIG_PATH}.tmp.XXXXXX")
 
     jq '(.inbounds[] | select(.tag=="inbound-turbonet") | .settings.fallbacks) =
-        [{"name":"","alpn":"","path":"","dest":22,"xver":0}]' \
+        [{"name":"","alpn":"","path":"/ssh","dest":22,"xver":0},
+         {"name":"","alpn":"","path":"","dest":22,"xver":0}]' \
         "$CONFIG_PATH" > "$tmp" 2>>"$LOG_FILE"
 
     if ! jq empty "$tmp" 2>/dev/null; then
@@ -183,7 +128,7 @@ _configure_xray_fallback() {
         systemctl restart xray >/dev/null 2>&1 || true
         return 1
     fi
-    echo -e "${TXT_GREEN}✅ Fallback configurado: porta 443 → SSH :22${RESET}"
+    echo -e "${TXT_GREEN}✅ Fallback configurado: porta 443 → OpenSSH :22${RESET}"
 }
 
 # --- REMOVER FALLBACK DO XRAY ---
@@ -209,7 +154,6 @@ _remove_xray_fallback() {
 _setup_proxy80() {
     echo -e "${TXT_YELLOW}Configurando proxy SSH na porta 80 (TCP + WebSocket)...${RESET}"
 
-    # Verificar porta 80
     if ss -tlnp 2>/dev/null | grep -q ":80 "; then
         echo -e "${TXT_YELLOW}⚠  Porta 80 em uso. Liberando...${RESET}"
         systemctl stop nginx   2>/dev/null || true
@@ -220,7 +164,6 @@ _setup_proxy80() {
 
     ensure_pkg python3 python3
 
-    # Servidor Python unificado: detecta WS vs TCP raw na mesma porta 80
     cat > /usr/local/bin/turbonet-proxy80.py << 'PYEOF'
 #!/usr/bin/env python3
 import asyncio, base64, hashlib, os
@@ -351,7 +294,7 @@ PYEOF
     cat > /etc/systemd/system/turbonet-proxy80.service << 'SVCEOF'
 [Unit]
 Description=TURBONET XRAY SSH Proxy porta 80 (TCP + WebSocket)
-After=network.target turbonet-dropbear.service
+After=network.target ssh.service sshd.service
 
 [Service]
 Type=simple
@@ -386,15 +329,9 @@ SVCEOF
         echo ""
         echo -e " ${TXT_CYAN}Via Azion CDN:${RESET}"
         echo -e "  ${TXT_YELLOW}ws://turbonet.azion.app:80${RESET} ou ${TXT_YELLOW}turbonet.azion.app:80${RESET}"
-        echo ""
-        echo -e " ${TXT_CYAN}Configuração no app:${RESET}"
-        echo -e "  Modo SSH: host ${TXT_YELLOW}${pub_ip}${RESET} porta ${TXT_YELLOW}80${RESET}"
-        echo -e "  Modo WS:  url  ${TXT_YELLOW}ws://${pub_ip}:80${RESET}"
-        echo -e "  UDPGW:        ${TXT_YELLOW}127.0.0.1:7300${RESET}"
         echo -e "${TXT_GREEN}================================================${RESET}"
     else
         echo -e "${TXT_RED}❌ Falha ao iniciar proxy porta 80.${RESET}"
-        journalctl -u turbonet-proxy80 -n 10 --no-pager 2>/dev/null || true
     fi
 }
 
@@ -467,10 +404,6 @@ _show_info() {
     echo -e " Host: ${TXT_YELLOW}${pub_ip}${RESET} | Porta: ${TXT_YELLOW}80${RESET}"
     echo -e " URL WS: ${TXT_YELLOW}ws://${pub_ip}:80${RESET}"
     echo ""
-    echo -e "${TXT_CYAN}━━━━ COM AZION CDN ━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-    echo -e " Configure Azion: porta 80/443 → ${pub_ip}"
-    echo -e " Host CDN: ${TXT_YELLOW}${preset_domain:-configure em [15] CDN Vercel}${RESET}"
-    echo ""
     read -rp "Enter para voltar..."
 }
 
@@ -479,39 +412,36 @@ while true; do
     clear
     echo -e "${TITLE_BAR}   SSH FALLBACK + PROXY — TURBONET XRAY   ${RESET}"
     echo ""
-    echo -e " Dropbear SSH:   $(_dropbear_status)"
+    echo -e " Servidor SSH:   $(_openssh_status)"
     echo -e " Xray Fallback:  $(_xray_fallback_status)"
     echo -e " Proxy Unificado: $(_proxy80_status)"
     echo ""
     echo -e "${TXT_GREEN}[1] Instalação completa (recomendado)${RESET}"
-    echo "    → Dropbear :22 + Xray fallback + Proxy 80 Unificado"
+    echo "    → Xray fallback + Proxy 80 Unificado (usa o OpenSSH da VPS)"
     echo ""
-    echo -e "${TXT_CYAN}[2] Instalar apenas Dropbear (porta 22)${RESET}"
-    echo -e "${TXT_CYAN}[3] Configurar fallback no Xray (443→22)${RESET}"
-    echo -e "${TXT_CYAN}[4] Ativar Proxy Unificado (Porta 80 TCP+WS)${RESET}"
-    echo -e "${TXT_CYAN}[5] Sincronizar usuários DB → SSH${RESET}"
-    echo -e "${TXT_CYAN}[6] Criar usuário SSH manualmente${RESET}"
-    echo -e "${TXT_CYAN}[7] Ver info de conexão${RESET}"
-    echo -e "${TXT_CYAN}[8] Ver logs Dropbear${RESET}"
-    echo -e "${TXT_RED}[9] Remover Proxy (Porta 80)${RESET}"
-    echo -e "${TXT_RED}[10] Remover tudo (Dropbear + fallback + proxies)${RESET}"
+    echo -e "${TXT_CYAN}[2] Configurar fallback no Xray (443→22)${RESET}"
+    echo -e "${TXT_CYAN}[3] Ativar Proxy Unificado (Porta 80 TCP+WS)${RESET}"
+    echo -e "${TXT_CYAN}[4] Sincronizar usuários DB → SSH${RESET}"
+    echo -e "${TXT_CYAN}[5] Criar usuário SSH manualmente${RESET}"
+    echo -e "${TXT_CYAN}[6] Ver info de conexão${RESET}"
+    echo -e "${TXT_CYAN}[7] Ver logs OpenSSH${RESET}"
+    echo -e "${TXT_RED}[8] Remover Proxy (Porta 80)${RESET}"
+    echo -e "${TXT_RED}[9] Remover tudo (fallback + proxy)${RESET}"
     echo -e "${TXT_CYAN}[0] Voltar${RESET}"
     echo "-----------------------------------------"
     read -rp "Opção: " opt
 
     case "${opt:-0}" in
         1)
-            _install_dropbear && \
             _configure_xray_fallback && \
             _setup_proxy80 && \
             _sync_ssh_users
             read -rp "Enter..."
             ;;
-        2) _install_dropbear;          read -rp "Enter..." ;;
-        3) _configure_xray_fallback;   read -rp "Enter..." ;;
-        4) _setup_proxy80;             read -rp "Enter..." ;;
-        5) _sync_ssh_users;            read -rp "Enter..." ;;
-        6)
+        2) _configure_xray_fallback;   read -rp "Enter..." ;;
+        3) _setup_proxy80;             read -rp "Enter..." ;;
+        4) _sync_ssh_users;            read -rp "Enter..." ;;
+        5)
             read -rp "Nome: " sn; read -rp "Senha: " sp
             sn=$(echo "${sn:-}" | tr -d '[:space:]')
             sp=$(echo "${sp:-}" | tr -d '[:space:]')
@@ -524,25 +454,21 @@ while true; do
             fi
             read -rp "Enter..."
             ;;
-        7) _show_info ;;
-        8)
-            journalctl -u turbonet-dropbear -n 30 --no-pager 2>/dev/null || \
+        6) _show_info ;;
+        7)
+            journalctl -u ssh -u sshd -n 30 --no-pager 2>/dev/null || \
                 echo "Sem logs."
             read -rp "Enter..."
             ;;
-        9)
+        8)
             _remove_proxy80
             read -rp "Enter..."
             ;;
-        10)
-            read -rp "Remover tudo? [s/N]: " conf
+        9)
+            read -rp "Remover Fallback e Proxy? [s/N]: " conf
             [[ "${conf:-n}" =~ ^[Ss]$ ]] || { echo "Cancelado."; sleep 1; continue; }
             _remove_xray_fallback
             _remove_proxy80
-            systemctl stop    turbonet-dropbear >/dev/null 2>&1 || true
-            systemctl disable turbonet-dropbear >/dev/null 2>&1 || true
-            rm -f /etc/systemd/system/turbonet-dropbear.service
-            systemctl daemon-reload
             echo -e "${TXT_GREEN}✅ Tudo removido.${RESET}"
             read -rp "Enter..."
             ;;
